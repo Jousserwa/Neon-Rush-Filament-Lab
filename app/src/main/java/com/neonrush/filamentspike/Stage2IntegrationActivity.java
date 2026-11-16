@@ -273,7 +273,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         int entity = EntityManager.get().create();
         new RenderableManager.Builder(1)
                 .geometryType(RenderableManager.Builder.GeometryType.DYNAMIC)
-                .boundingBox(new Box(0f, 0f, 0f, 0.5f, 0.35f, 0.25f))
+                .boundingBox(new Box(0f, 0f, 0f, BASE_HALF_X, BASE_HALF_Y, BASE_HALF_Z))
                 .geometry(0, RenderableManager.PrimitiveType.TRIANGLES,
                         obstacleVertices, obstacleIndices, 0, 36)
                 .build(engine, entity);
