@@ -40,8 +40,10 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private static final String TAG = "NRStage2Public";
     private static final float OBSTACLE_START_Z = -8.5f;
     private static final float OBSTACLE_SPEED_UNITS_PER_SECOND = 2.0f;
-    private static final float PILOT_Z = -1.5f;
-    private static final float PILOT_HALF_WIDTH = 0.46f;
+    private static final float PILOT_Z = -2.5f;
+    private static final float PILOT_HALF_WIDTH = 0.40f;
+    private static final float PILOT_HALF_DEPTH = 0.18f;
+    private static final float BASE_HALF_X = 0.325f, BASE_HALF_Y = 0.225f, BASE_HALF_Z = 0.125f;
 
     private FrameLayout root;
     private SurfaceView surface;
@@ -81,9 +83,10 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
         TextView footer = new TextView(this);
         footer.setText("DRAG TO STEER • 3D PILOT + OBSTACLE");
-        footer.setTextColor(Color.argb(220, 0, 229, 255));
-        footer.setTextSize(12);
-        footer.setShadowLayer(5, 0, 0, Color.CYAN);
+        footer.setTextColor(Color.rgb(205, 225, 232));
+        footer.setTextSize(11);
+        footer.setShadowLayer(0, 0, 0, Color.TRANSPARENT);
+        footer.setBackgroundColor(Color.argb(190, 5, 13, 22));
         footer.setGravity(android.view.Gravity.CENTER);
         footer.setPadding(12, 8, 12, 18);
         footer.setClickable(false);
@@ -283,8 +286,12 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     }
 
     private void setPilotPart(TransformManager transforms, int entity,
-                              float x, float y, float z, float sx, float sy, float sz) {
+                              float x, float y, float z, float halfX, float halfY, float halfZ) {
         int instance = transforms.getInstance(entity);
+        // Convert desired WORLD half-extents into scale factors for the shared base box.
+        float sx = halfX / BASE_HALF_X;
+        float sy = halfY / BASE_HALF_Y;
+        float sz = halfZ / BASE_HALF_Z;
         float[] matrix = {
                 sx,0,0,0,
                 0,sy,0,0,
@@ -308,21 +315,22 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         int rootInstance = transforms.getInstance(pilotRootEntity);
         float[] rootMatrix = {1,0,0,0, 0,1,0,0, 0,0,1,0, pilotWorldX,0,0,1};
         transforms.setTransform(rootInstance, rootMatrix);
-        setPilotPart(transforms, pilotBodyEntity, 0f, 0.48f, 0f,
-                0.27f, 0.68f, 0.34f);
-        // Head lowered to meet the torso: no floating neck gap in the blockout.
-        setPilotPart(transforms, pilotHeadEntity, 0f, 0.85f, 0f,
-                0.30f, 0.38f, 0.48f);
-        setPilotPart(transforms, pilotPackEntity, 0f, 0.53f, 0.19f,
-                0.44f, 0.45f, 0.42f);
-        setPilotPart(transforms, pilotLeftArmEntity, -0.31f, 0.52f, 0f,
-                0.13f, 0.58f, 0.28f);
-        setPilotPart(transforms, pilotRightArmEntity, 0.31f, 0.52f, 0f,
-                0.13f, 0.58f, 0.28f);
-        setPilotPart(transforms, pilotLeftLegEntity, -0.12f, 0.16f, 0f,
-                0.14f, 0.45f, 0.30f);
-        setPilotPart(transforms, pilotRightLegEntity, 0.12f, 0.16f, 0f,
-                0.14f, 0.45f, 0.30f);
+        setPilotPart(transforms, pilotBodyEntity, 0f, 0.95f, 0f,
+                0.23f, 0.34f, 0.16f);
+        // Head overlaps the torso slightly so the neck joint cannot separate.
+        setPilotPart(transforms, pilotHeadEntity, 0f, 1.43f, 0f,
+                0.18f, 0.20f, 0.18f);
+        setPilotPart(transforms, pilotPackEntity, 0f, 0.92f, 0.20f,
+                0.18f, 0.28f, 0.12f);
+        // Arms overlap the torso shoulders; legs overlap the lower torso and reach floor y=0.
+        setPilotPart(transforms, pilotLeftArmEntity, -0.29f, 0.94f, 0f,
+                0.09f, 0.28f, 0.10f);
+        setPilotPart(transforms, pilotRightArmEntity, 0.29f, 0.94f, 0f,
+                0.09f, 0.28f, 0.10f);
+        setPilotPart(transforms, pilotLeftLegEntity, -0.12f, 0.30f, 0f,
+                0.105f, 0.30f, 0.12f);
+        setPilotPart(transforms, pilotRightLegEntity, 0.12f, 0.30f, 0f,
+                0.105f, 0.30f, 0.12f);
     }
 
     private void setObstacleTransform(TransformManager transforms, float x, float y, float z) {
@@ -362,8 +370,8 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
 
     // Conservative world-space AABB test using the assembled pilot extents and obstacle bounds.
     private boolean overlapsPilotObstacleAabb() {
-        final float pilotHalfX = 0.46f, pilotMinY = 0.002f, pilotMaxY = 0.983f;
-        final float pilotHalfZ = 0.30f;
+        final float pilotHalfX = PILOT_HALF_WIDTH, pilotMinY = 0.0f, pilotMaxY = 1.63f;
+        final float pilotHalfZ = PILOT_HALF_DEPTH;
         final float obstacleCenterX = 1.0f, obstacleHalfX = 0.325f;
         final float obstacleCenterY = 0.225f, obstacleHalfY = 0.225f;
         final float obstacleHalfZ = 0.125f;
@@ -513,7 +521,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         private float pilotX = 0.5f;
         private float pilotY = 0.70f;
         private long touchDownMs;
-        private boolean diagnosticsVisible;
+        private boolean diagnosticsVisible = true;
         private double callbacksPerSecond, acceptedPerSecond, renderCpuMs;
         private long rejectedFrames;
         void setDiagnostics(double callbacks, double accepted, double cpuMs, long rejected) {
