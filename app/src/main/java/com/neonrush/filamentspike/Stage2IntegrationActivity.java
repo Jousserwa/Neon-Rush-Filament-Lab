@@ -39,7 +39,7 @@ import java.nio.ByteOrder;
 public final class Stage2IntegrationActivity extends Activity implements Choreographer.FrameCallback {
     private static final String TAG = "NRStage2Public";
     private static final float OBSTACLE_START_Z = -8.5f;
-    private static final float OBSTACLE_SPEED = 0.035f;
+    private static final float OBSTACLE_SPEED_UNITS_PER_SECOND = 2.0f;
 
     private FrameLayout root;
     private SurfaceView surface;
@@ -56,6 +56,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private VertexBuffer obstacleVertices;
     private IndexBuffer obstacleIndices;
     private float obstacleZ = OBSTACLE_START_Z;
+    private long previousFrameTimeNs;
     private long statsWindowStartNs;
     private long statsCallbacks;
     private long statsAccepted;
@@ -244,7 +245,13 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
 
     private void update3DObstacle(long frameTimeNanos) {
         if (viewer == null || obstacleEntity == 0) return;
-        obstacleZ += OBSTACLE_SPEED;
+        // Move in world units per second, independent of device refresh rate.
+        // Cap a resumed/stalled frame to prevent a large teleport.
+        float deltaSeconds = previousFrameTimeNs == 0L ? 0f
+                : Math.min(0.05f, Math.max(0f,
+                    (frameTimeNanos - previousFrameTimeNs) / 1_000_000_000f));
+        previousFrameTimeNs = frameTimeNanos;
+        obstacleZ += OBSTACLE_SPEED_UNITS_PER_SECOND * deltaSeconds;
         if (obstacleZ > -1.5f) obstacleZ = OBSTACLE_START_Z;
         setObstacleTransform(viewer.getEngine().getTransformManager(), 1.0f, 0.35f, obstacleZ);
     }
@@ -270,6 +277,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private void startLoop() {
         if (!resumed || running || viewer == null || destroyed) return;
         running = true;
+        previousFrameTimeNs = 0L;
         statsWindowStartNs = System.nanoTime();
         statsCallbacks = statsAccepted = statsRejected = statsRenderCpuNs = statsMaxRenderCpuNs = 0;
         Choreographer.getInstance().postFrameCallback(this);
