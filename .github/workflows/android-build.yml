@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -50,5 +50,18 @@ jobs:
       - name: Build debug APK
         run: gradle :app:assembleDebug --no-daemon
 
-      - name: Verify APK exists (no artifact upload)
+      - name: Verify APK exists
         run: test -s app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish public lab test APK as a prerelease asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="stage2-public-lab-latest"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          NOTES="Public synthetic Filament integration harness only. This is not the production Neon Rush game and contains no production game source or credentials. For testing purposes only."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "$APK" --title "Stage 2 Public Lab Test Build" --notes "$NOTES" --prerelease --repo "$GITHUB_REPOSITORY"
+          fi
