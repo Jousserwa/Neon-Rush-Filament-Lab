@@ -41,7 +41,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private static final float OBSTACLE_START_Z = -8.5f;
     private static final float OBSTACLE_SPEED_UNITS_PER_SECOND = 2.0f;
     private static final float PILOT_Z = -1.5f;
-    private static final float PILOT_HALF_WIDTH = 0.82f;
+    private static final float PILOT_HALF_WIDTH = 0.46f;
 
     private FrameLayout root;
     private SurfaceView surface;
@@ -79,6 +79,18 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         root.addView(surface, new FrameLayout.LayoutParams(-1, -1));
         overlay = new PilotOverlay();
         root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        TextView footer = new TextView(this);
+        footer.setText("DRAG TO STEER • 3D PILOT + OBSTACLE");
+        footer.setTextColor(Color.argb(220, 0, 229, 255));
+        footer.setTextSize(12);
+        footer.setShadowLayer(5, 0, 0, Color.CYAN);
+        footer.setGravity(android.view.Gravity.CENTER);
+        footer.setPadding(12, 8, 12, 18);
+        footer.setClickable(false);
+        footer.setFocusable(false);
+        FrameLayout.LayoutParams footerParams = new FrameLayout.LayoutParams(-1, -2,
+                android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL);
+        root.addView(footer, footerParams);
         TextView hud = new TextView(this);
         hud.setText("NEON RUSH • PUBLIC INTEGRATION LAB\nFILAMENT ENVIRONMENT + 3D TEST OBSTACLE");
         hud.setTextColor(Color.WHITE);
@@ -157,7 +169,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private void create3DObstacle(Engine engine) {
         // Flat-shaded rectangular obstacle: 1.0 wide x 0.7 high x 0.5 deep.
         // Each face owns four vertices so its normal remains perpendicular to that face.
-        final float hx = 0.5f, hy = 0.35f, hz = 0.25f;
+        final float hx = 0.325f, hy = 0.225f, hz = 0.125f;
         float[] positions = {
                 // Front (+Z)
                 -hx,-hy,hz,  hx,-hy,hz,  hx,hy,hz,  -hx,hy,hz,
@@ -288,7 +300,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 ? (float) surface.getWidth() / (float) surface.getHeight() : 0.5f;
         float visibleHalfWidth = depth * 0.57735027f * aspect;
         float requestedX = (normalizedX * 2f - 1f) * visibleHalfWidth;
-        pilotWorldX = Math.max(-PILOT_HALF_WIDTH, Math.min(PILOT_HALF_WIDTH, requestedX));
+        // Keep the widest pilot component (the backpack) inside the camera frustum.
+        float safeCenterLimit = Math.max(0f, visibleHalfWidth - PILOT_HALF_WIDTH - 0.04f);
+        pilotWorldX = Math.max(-safeCenterLimit, Math.min(safeCenterLimit, requestedX));
 
         // Root carries steering; each body part is positioned in pilot-local coordinates.
         int rootInstance = transforms.getInstance(pilotRootEntity);
@@ -339,20 +353,20 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             Log.i(TAG, "TEST_PASS_AABB: obstacle cleared pilot bounds");
             obstacleCollisionReported = true;
         }
-        if (obstacleZ > PILOT_Z + 0.65f) {
+        if (obstacleZ > -0.5f) {
             obstacleZ = OBSTACLE_START_Z;
             obstacleCollisionReported = false;
         }
-        setObstacleTransform(viewer.getEngine().getTransformManager(), 1.0f, 0.35f, obstacleZ);
+        setObstacleTransform(viewer.getEngine().getTransformManager(), 1.0f, 0.225f, obstacleZ);
     }
 
     // Conservative world-space AABB test using the assembled pilot extents and obstacle bounds.
     private boolean overlapsPilotObstacleAabb() {
-        final float pilotHalfX = 0.375f, pilotMinY = 0.002f, pilotMaxY = 1.123f;
+        final float pilotHalfX = 0.46f, pilotMinY = 0.002f, pilotMaxY = 0.983f;
         final float pilotHalfZ = 0.30f;
-        final float obstacleCenterX = 1.0f, obstacleHalfX = 0.5f;
-        final float obstacleCenterY = 0.35f, obstacleHalfY = 0.35f;
-        final float obstacleHalfZ = 0.25f;
+        final float obstacleCenterX = 1.0f, obstacleHalfX = 0.325f;
+        final float obstacleCenterY = 0.225f, obstacleHalfY = 0.225f;
+        final float obstacleHalfZ = 0.125f;
         boolean x = Math.abs(pilotWorldX - obstacleCenterX) <= pilotHalfX + obstacleHalfX;
         boolean y = pilotMaxY >= obstacleCenterY - obstacleHalfY
                 && pilotMinY <= obstacleCenterY + obstacleHalfY;
@@ -512,7 +526,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             float w = getWidth(), h = getHeight();
             float x=pilotX*w, y=pilotY*h;
             p.setColor(Color.argb(180,0,229,255)); p.setTextSize(24);
-            c.drawText("DRAG TO STEER  •  3D PILOT + OBSTACLE", 18, h-28, p);
+            // Footer is a native TextView above the Filament SurfaceView.
             if (diagnosticsVisible) {
                 p.setColor(Color.argb(220, 0, 0, 0));
                 c.drawRect(12, 78, 330, 164, p);
