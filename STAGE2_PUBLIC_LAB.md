@@ -24,7 +24,7 @@ Run:
 
 `gradle :app:assembleDebug --no-daemon`
 
-The GitHub Actions workflow builds the debug APK but does not upload an Actions artifact. This avoids consuming the repository's limited Actions artifact storage. The APK is generated at `app/build/outputs/apk/debug/app-debug.apk` on the runner and is not retained after the job.
+The GitHub Actions workflow builds the debug APK, uploads it as the `stage2-public-lab-apk` artifact for 7 days, and also publishes it as a prerelease asset. Download the Actions artifact from the successful workflow run's **Artifacts** section; this is the preferred download route for mobile devices.
 
 ## Safety rules
 
