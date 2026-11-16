@@ -371,7 +371,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     // Conservative world-space AABB test using the assembled pilot extents and obstacle bounds.
     private boolean overlapsPilotObstacleAabb() {
         final float pilotHalfX = PILOT_HALF_WIDTH, pilotMinY = 0.0f, pilotMaxY = 1.63f;
-        final float pilotHalfZ = PILOT_HALF_DEPTH;
+        final float pilotHalfZ = 0.32f; // Includes the rear backpack protrusion.
         final float obstacleCenterX = 1.0f, obstacleHalfX = 0.325f;
         final float obstacleCenterY = 0.225f, obstacleHalfY = 0.225f;
         final float obstacleHalfZ = 0.125f;
