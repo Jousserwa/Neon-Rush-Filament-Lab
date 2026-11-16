@@ -146,32 +146,65 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     }
 
     private void create3DObstacle(Engine engine) {
-        // A compact, closed cube mesh. Local dimensions are 1.0 x 0.7 x 0.5 units.
+        // Flat-shaded rectangular obstacle: 1.0 wide x 0.7 high x 0.5 deep.
+        // Each face owns four vertices so its normal remains perpendicular to that face.
+        final float hx = 0.5f, hy = 0.35f, hz = 0.25f;
         float[] positions = {
-                -0.5f,-0.5f,-0.5f,  0.5f,-0.5f,-0.5f,
-                 0.5f, 0.5f,-0.5f, -0.5f, 0.5f,-0.5f,
-                -0.5f,-0.5f, 0.5f,   0.5f,-0.5f, 0.5f,
-                 0.5f, 0.5f, 0.5f,  -0.5f, 0.5f, 0.5f
+                // Front (+Z)
+                -hx,-hy,hz,  hx,-hy,hz,  hx,hy,hz,  -hx,hy,hz,
+                // Back (-Z)
+                hx,-hy,-hz,  -hx,-hy,-hz,  -hx,hy,-hz,  hx,hy,-hz,
+                // Right (+X)
+                hx,-hy,hz,  hx,-hy,-hz,  hx,hy,-hz,  hx,hy,hz,
+                // Left (-X)
+                -hx,-hy,-hz,  -hx,-hy,hz,  -hx,hy,hz,  -hx,hy,-hz,
+                // Top (+Y)
+                -hx,hy,hz,  hx,hy,hz,  hx,hy,-hz,  -hx,hy,-hz,
+                // Bottom (-Y)
+                -hx,-hy,-hz,  hx,-hy,-hz,  hx,-hy,hz,  -hx,-hy,hz
+        };
+        float[] normals = {
+                0,0,1,  0,0,1,  0,0,1,  0,0,1,
+                0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
+                1,0,0,  1,0,0,  1,0,0,  1,0,0,
+                -1,0,0, -1,0,0, -1,0,0, -1,0,0,
+                0,1,0,  0,1,0,  0,1,0,  0,1,0,
+                0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0
         };
         short[] indices = {
-                0,2,1, 0,3,2, 4,5,6, 4,6,7,
-                0,1,5, 0,5,4, 3,7,6, 3,6,2,
-                0,4,7, 0,7,3, 1,2,6, 1,6,5
+                0,1,2, 0,2,3,
+                4,5,6, 4,6,7,
+                8,9,10, 8,10,11,
+                12,13,14, 12,14,15,
+                16,17,18, 16,18,19,
+                20,21,22, 20,22,23
         };
 
-        ByteBuffer vertexData = ByteBuffer.allocateDirect(positions.length * 4).order(ByteOrder.nativeOrder());
+        ByteBuffer vertexData = ByteBuffer.allocateDirect(positions.length * 4)
+                .order(ByteOrder.nativeOrder());
         for (float value : positions) vertexData.putFloat(value);
         vertexData.flip();
-        ByteBuffer indexData = ByteBuffer.allocateDirect(indices.length * 2).order(ByteOrder.nativeOrder());
+
+        ByteBuffer normalData = ByteBuffer.allocateDirect(normals.length * 4)
+                .order(ByteOrder.nativeOrder());
+        for (float value : normals) normalData.putFloat(value);
+        normalData.flip();
+
+        ByteBuffer indexData = ByteBuffer.allocateDirect(indices.length * 2)
+                .order(ByteOrder.nativeOrder());
         for (short value : indices) indexData.putShort(value);
         indexData.flip();
 
         obstacleVertices = new VertexBuffer.Builder()
-                .vertexCount(8)
-                .bufferCount(1)
-                .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3)
+                .vertexCount(24)
+                .bufferCount(2)
+                .attribute(VertexBuffer.VertexAttribute.POSITION, 0,
+                        VertexBuffer.AttributeType.FLOAT3)
+                .attribute(VertexBuffer.VertexAttribute.NORMAL, 1,
+                        VertexBuffer.AttributeType.FLOAT3)
                 .build(engine);
         obstacleVertices.setBufferAt(engine, 0, vertexData);
+        obstacleVertices.setBufferAt(engine, 1, normalData);
 
         obstacleIndices = new IndexBuffer.Builder()
                 .indexCount(indices.length)
@@ -182,15 +215,16 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         obstacleEntity = EntityManager.get().create();
         new RenderableManager.Builder(1)
                 .geometryType(RenderableManager.Builder.GeometryType.DYNAMIC)
-                .boundingBox(new Box(0f, 0f, 0f, 0.5f, 0.35f, 0.25f))
+                .boundingBox(new Box(0f, 0f, 0f, hx, hy, hz))
                 .geometry(0, RenderableManager.PrimitiveType.TRIANGLES,
                         obstacleVertices, obstacleIndices, 0, indices.length)
-                // Omitting a custom material intentionally uses Filament's basic fallback material.
+                // A deliberate fallback material remains until a compiled PBR material is added.
                 .build(engine, obstacleEntity);
 
         TransformManager transforms = engine.getTransformManager();
         transforms.create(obstacleEntity);
-        setObstacleTransform(transforms, 1.0f, 0.55f, obstacleZ);
+        // Center at half-height so the obstacle's bottom sits on the y=0 floor plane.
+        setObstacleTransform(transforms, 1.0f, hy, obstacleZ);
         viewer.getScene().addEntity(obstacleEntity);
     }
 
@@ -209,7 +243,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         if (viewer == null || obstacleEntity == 0) return;
         obstacleZ += OBSTACLE_SPEED;
         if (obstacleZ > -1.5f) obstacleZ = OBSTACLE_START_Z;
-        setObstacleTransform(viewer.getEngine().getTransformManager(), 1.0f, 0.55f, obstacleZ);
+        setObstacleTransform(viewer.getEngine().getTransformManager(), 1.0f, 0.35f, obstacleZ);
     }
 
     private byte[] readAsset(String name) throws Exception {
