@@ -394,7 +394,8 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         if (viewer == null || destroyed) return;
         int w = surface.getWidth(), h = surface.getHeight();
         if (w <= 0 || h <= 0) return;
-        viewer.getCamera().lookAt(0, 1.6, 2, 0, 1.6, -9, 0, 1, 0);
+        // Slight downward pitch keeps the y=0 floor and pilot feet inside the portrait frustum.
+        viewer.getCamera().lookAt(0, 1.6, 2, 0, 1.0, -9, 0, 1, 0);
         viewer.setCameraNear(0.1f); viewer.setCameraFar(50f);
         viewer.getCamera().setProjection(60.0, (double) w / h, 0.1, 50.0,
                 com.google.android.filament.Camera.Fov.VERTICAL);
@@ -476,6 +477,15 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             }
             if (obstacleVertices != null) engine.destroyVertexBuffer(obstacleVertices);
             if (obstacleIndices != null) engine.destroyIndexBuffer(obstacleIndices);
+
+            // Release app-owned lighting while the ModelViewer Engine is still valid.
+            if (ambient != null) {
+                current.getScene().setIndirectLight(null);
+                engine.destroyIndirectLight(ambient);
+                ambient = null;
+            }
+            // Drain queued GPU work before SurfaceView detach lets ModelViewer tear down Engine.
+            engine.flushAndWait();
         } catch (Throwable e) {
             Log.w(TAG, "Obstacle cleanup skipped because renderer teardown may already have started", e);
         } finally {
