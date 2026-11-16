@@ -2,7 +2,7 @@ name: Filament Lab Android Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, stage2-public-integration]
     paths:
       - "app/**"
       - "*.gradle.kts"
