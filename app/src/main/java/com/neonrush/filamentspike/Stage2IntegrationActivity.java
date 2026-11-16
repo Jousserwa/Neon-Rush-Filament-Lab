@@ -163,13 +163,16 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 // Bottom (-Y)
                 -hx,-hy,-hz,  hx,-hy,-hz,  hx,-hy,hz,  -hx,-hy,hz
         };
-        float[] normals = {
-                0,0,1,  0,0,1,  0,0,1,  0,0,1,
-                0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
-                1,0,0,  1,0,0,  1,0,0,  1,0,0,
-                -1,0,0, -1,0,0, -1,0,0, -1,0,0,
-                0,1,0,  0,1,0,  0,1,0,  0,1,0,
-                0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0
+        // Filament encodes the tangent frame (including its normal) as a quaternion.
+        // One frame per flat-shaded face: front, back, right, left, top, bottom.
+        final float q = 0.70710678f;
+        float[] tangents = {
+                0,0,0,1,  0,0,0,1,  0,0,0,1,  0,0,0,1,
+                0,1,0,0,  0,1,0,0,  0,1,0,0,  0,1,0,0,
+                0,q,0,q,  0,q,0,q,  0,q,0,q,  0,q,0,q,
+                0,-q,0,q, 0,-q,0,q, 0,-q,0,q, 0,-q,0,q,
+                -q,0,0,q, -q,0,0,q, -q,0,0,q, -q,0,0,q,
+                q,0,0,q,   q,0,0,q,   q,0,0,q,   q,0,0,q
         };
         short[] indices = {
                 0,1,2, 0,2,3,
@@ -185,10 +188,10 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         for (float value : positions) vertexData.putFloat(value);
         vertexData.flip();
 
-        ByteBuffer normalData = ByteBuffer.allocateDirect(normals.length * 4)
+        ByteBuffer tangentData = ByteBuffer.allocateDirect(tangents.length * 4)
                 .order(ByteOrder.nativeOrder());
-        for (float value : normals) normalData.putFloat(value);
-        normalData.flip();
+        for (float value : tangents) tangentData.putFloat(value);
+        tangentData.flip();
 
         ByteBuffer indexData = ByteBuffer.allocateDirect(indices.length * 2)
                 .order(ByteOrder.nativeOrder());
@@ -200,11 +203,11 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 .bufferCount(2)
                 .attribute(VertexBuffer.VertexAttribute.POSITION, 0,
                         VertexBuffer.AttributeType.FLOAT3)
-                .attribute(VertexBuffer.VertexAttribute.NORMAL, 1,
-                        VertexBuffer.AttributeType.FLOAT3)
+                .attribute(VertexBuffer.VertexAttribute.TANGENTS, 1,
+                        VertexBuffer.AttributeType.FLOAT4)
                 .build(engine);
         obstacleVertices.setBufferAt(engine, 0, vertexData);
-        obstacleVertices.setBufferAt(engine, 1, normalData);
+        obstacleVertices.setBufferAt(engine, 1, tangentData);
 
         obstacleIndices = new IndexBuffer.Builder()
                 .indexCount(indices.length)
