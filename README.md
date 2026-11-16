@@ -30,3 +30,8 @@ app/build/outputs/apk/debug/app-debug.apk
 This is **not** the Neon Rush production game and is not the Stage 2 integration copy. It contains no production gameplay code, monetization integrations, Firebase configuration, production signing keys, or production credentials. The public lab is intentionally limited to the standalone Filament renderer test.
 
 The tested renderer is a technical baseline, not final game art or a production-ready game environment.
+
+
+## Automated validation
+
+Every change to the app source, Gradle configuration, or this workflow triggers the GitHub Actions Android build. The workflow compiles the debug APK without uploading build artifacts, keeping the public lab independent of any signing secrets and avoiding unnecessary artifact storage.
