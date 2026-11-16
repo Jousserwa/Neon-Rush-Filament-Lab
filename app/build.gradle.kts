@@ -1,0 +1,38 @@
+plugins {
+    id("com.android.application")
+}
+
+android {
+    namespace = "com.neonrush.filamentspike"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.neonrush.filamentspike"
+        minSdk = 24
+        targetSdk = 35
+        versionCode = 1
+        versionName = "0.1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    buildTypes {
+        debug {
+            isMinifyEnabled = false
+        }
+        release {
+            isMinifyEnabled = false
+            // Internal device-validation signing only; this is NOT a production signing key.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+}
+
+dependencies {
+    implementation("com.google.android.filament:filament-android:1.80.1")
+    implementation("com.google.android.filament:gltfio-android:1.80.1")
+    implementation("com.google.android.filament:filament-utils-android:1.80.1")
+}
