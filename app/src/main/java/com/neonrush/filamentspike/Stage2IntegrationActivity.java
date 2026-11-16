@@ -38,11 +38,13 @@ import java.nio.ByteOrder;
  */
 public final class Stage2IntegrationActivity extends Activity implements Choreographer.FrameCallback {
     private static final String TAG = "NRStage2Public";
-    private static final float OBSTACLE_START_Z = -8.5f;
+    private static final float OBSTACLE_START_Z = -10.0f;
+    private static final float OBSTACLE_RECYCLE_Z = -2.0f;
     private static final float OBSTACLE_SPEED_UNITS_PER_SECOND = 2.0f;
-    private static final float PILOT_Z = -2.5f;
+    private static final float PILOT_Z = -4.0f;
     private static final float PILOT_HALF_WIDTH = 0.40f;
-    private static final float PILOT_HALF_DEPTH = 0.18f;
+    private static final float PILOT_HALF_HEIGHT = 0.815f;
+    private static final float PILOT_HALF_DEPTH = 0.32f;
     private static final float BASE_HALF_X = 0.325f, BASE_HALF_Y = 0.225f, BASE_HALF_Z = 0.125f;
 
     private FrameLayout root;
@@ -61,6 +63,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private int pilotBodyEntity, pilotHeadEntity, pilotPackEntity;
     private int pilotLeftArmEntity, pilotRightArmEntity, pilotLeftLegEntity, pilotRightLegEntity;
     private float pilotWorldX;
+    private float pilotWorldY;
     private boolean obstacleCollisionReported;
     private VertexBuffer obstacleVertices;
     private IndexBuffer obstacleIndices;
@@ -266,7 +269,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         pilotRightArmEntity = createPilotPart(engine);
         pilotLeftLegEntity = createPilotPart(engine);
         pilotRightLegEntity = createPilotPart(engine);
-        updatePilotTransform(engine.getTransformManager(), 0.5f);
+        updatePilotTransform(engine.getTransformManager(), 0.5f, 0.56f);
     }
 
     private int createPilotPart(Engine engine) {
@@ -301,36 +304,33 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         transforms.setTransform(instance, matrix);
     }
 
-    private void updatePilotTransform(TransformManager transforms, float normalizedX) {
+    private void updatePilotTransform(TransformManager transforms, float normalizedX, float normalizedY) {
         float depth = 2.0f - PILOT_Z;
-        float aspect = surface.getHeight() > 0
-                ? (float) surface.getWidth() / (float) surface.getHeight() : 0.5f;
+        float aspect = surface.getHeight() > 0 ? (float) surface.getWidth() / (float) surface.getHeight() : 0.5f;
         float visibleHalfWidth = depth * 0.57735027f * aspect;
         float requestedX = (normalizedX * 2f - 1f) * visibleHalfWidth;
-        // Keep the widest pilot component (the backpack) inside the camera frustum.
         float safeCenterLimit = Math.max(0f, visibleHalfWidth - PILOT_HALF_WIDTH - 0.04f);
         pilotWorldX = Math.max(-safeCenterLimit, Math.min(safeCenterLimit, requestedX));
 
-        // Root carries steering; each body part is positioned in pilot-local coordinates.
+        // Map finger Y onto the pilot's fixed-Z plane using the current camera geometry.
+        float ndcY = 1f - 2f * Math.max(0f, Math.min(1f, normalizedY));
+        float invLength = 1f / (float)Math.sqrt(11f * 11f + 0.6f * 0.6f);
+        float rayY = -0.6f * invLength + 11f * invLength * ndcY * 0.57735027f;
+        float rayZ = -11f * invLength - 0.6f * invLength * ndcY * 0.57735027f;
+        float distance = (PILOT_Z - 2f) / rayZ;
+        float requestedRootY = 1.6f + rayY * distance - PILOT_HALF_HEIGHT;
+        pilotWorldY = Math.max(0f, Math.min(2.1f, requestedRootY));
+
         int rootInstance = transforms.getInstance(pilotRootEntity);
-        float[] rootMatrix = {1,0,0,0, 0,1,0,0, 0,0,1,0, pilotWorldX,0,0,1};
+        float[] rootMatrix = {1,0,0,0, 0,1,0,0, 0,0,1,0, pilotWorldX,pilotWorldY,PILOT_Z,1};
         transforms.setTransform(rootInstance, rootMatrix);
-        setPilotPart(transforms, pilotBodyEntity, 0f, 0.95f, 0f,
-                0.23f, 0.34f, 0.16f);
-        // Head overlaps the torso slightly so the neck joint cannot separate.
-        setPilotPart(transforms, pilotHeadEntity, 0f, 1.43f, 0f,
-                0.18f, 0.20f, 0.18f);
-        setPilotPart(transforms, pilotPackEntity, 0f, 0.92f, 0.20f,
-                0.18f, 0.28f, 0.12f);
-        // Arms overlap the torso shoulders; legs overlap the lower torso and reach floor y=0.
-        setPilotPart(transforms, pilotLeftArmEntity, -0.29f, 0.94f, 0f,
-                0.09f, 0.28f, 0.10f);
-        setPilotPart(transforms, pilotRightArmEntity, 0.29f, 0.94f, 0f,
-                0.09f, 0.28f, 0.10f);
-        setPilotPart(transforms, pilotLeftLegEntity, -0.12f, 0.30f, 0f,
-                0.105f, 0.30f, 0.12f);
-        setPilotPart(transforms, pilotRightLegEntity, 0.12f, 0.30f, 0f,
-                0.105f, 0.30f, 0.12f);
+        setPilotPart(transforms, pilotBodyEntity, 0f, 0.95f, 0f, 0.23f, 0.34f, 0.16f);
+        setPilotPart(transforms, pilotHeadEntity, 0f, 1.43f, 0f, 0.18f, 0.20f, 0.18f);
+        setPilotPart(transforms, pilotPackEntity, 0f, 0.92f, 0.20f, 0.18f, 0.28f, 0.12f);
+        setPilotPart(transforms, pilotLeftArmEntity, -0.29f, 0.94f, 0f, 0.09f, 0.28f, 0.10f);
+        setPilotPart(transforms, pilotRightArmEntity, 0.29f, 0.94f, 0f, 0.09f, 0.28f, 0.10f);
+        setPilotPart(transforms, pilotLeftLegEntity, -0.12f, 0.30f, 0f, 0.105f, 0.30f, 0.12f);
+        setPilotPart(transforms, pilotRightLegEntity, 0.12f, 0.30f, 0f, 0.105f, 0.30f, 0.12f);
     }
 
     private void setObstacleTransform(TransformManager transforms, float x, float y, float z) {
@@ -361,19 +361,19 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             Log.i(TAG, "TEST_PASS_AABB: obstacle cleared pilot bounds");
             obstacleCollisionReported = true;
         }
-        if (obstacleZ > -0.5f) {
+        if (obstacleZ > OBSTACLE_RECYCLE_Z) {
             obstacleZ = OBSTACLE_START_Z;
             obstacleCollisionReported = false;
         }
-        setObstacleTransform(viewer.getEngine().getTransformManager(), 1.0f, 0.225f, obstacleZ);
+        setObstacleTransform(viewer.getEngine().getTransformManager(), 0.65f, 1.90f, obstacleZ);
     }
 
     // Conservative world-space AABB test using the assembled pilot extents and obstacle bounds.
     private boolean overlapsPilotObstacleAabb() {
-        final float pilotHalfX = PILOT_HALF_WIDTH, pilotMinY = 0.0f, pilotMaxY = 1.63f;
-        final float pilotHalfZ = 0.32f; // Includes the rear backpack protrusion.
-        final float obstacleCenterX = 1.0f, obstacleHalfX = 0.325f;
-        final float obstacleCenterY = 0.225f, obstacleHalfY = 0.225f;
+        final float pilotHalfX = PILOT_HALF_WIDTH, pilotMinY = pilotWorldY, pilotMaxY = pilotWorldY + 2f * PILOT_HALF_HEIGHT;
+        final float pilotHalfZ = PILOT_HALF_DEPTH;
+        final float obstacleCenterX = 0.65f, obstacleHalfX = 0.325f;
+        final float obstacleCenterY = 1.90f, obstacleHalfY = 0.225f;
         final float obstacleHalfZ = 0.125f;
         boolean x = Math.abs(pilotWorldX - obstacleCenterX) <= pilotHalfX + obstacleHalfX;
         boolean y = pilotMaxY >= obstacleCenterY - obstacleHalfY
@@ -401,9 +401,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 com.google.android.filament.Camera.Fov.VERTICAL);
     }
 
-    private void updatePilotFromScreenX(float normalizedX) {
+    private void updatePilotFromScreen(float normalizedX, float normalizedY) {
         if (viewer == null || destroyed) return;
-        updatePilotTransform(viewer.getEngine().getTransformManager(), normalizedX);
+        updatePilotTransform(viewer.getEngine().getTransformManager(), normalizedX, normalizedY);
     }
 
     private void startLoop() {
@@ -559,7 +559,8 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             if(e.getAction()==MotionEvent.ACTION_DOWN){
                 touchDownMs = e.getEventTime();
                 pilotX=Math.max(0f,Math.min(1f,e.getX()/Math.max(1f,getWidth())));
-                updatePilotFromScreenX(pilotX);
+                pilotY=Math.max(0f,Math.min(1f,e.getY()/Math.max(1f,getHeight())));
+                updatePilotFromScreen(pilotX, pilotY);
                 return true;
             }
             if(e.getAction()==MotionEvent.ACTION_MOVE){
