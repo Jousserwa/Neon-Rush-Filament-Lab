@@ -6,11 +6,11 @@
 
     <application
         android:allowBackup="false"
-        android:label="Neon Rush 3D Renderer Test"
+        android:label="Neon Rush Stage 2 Integration Lab"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:hardwareAccelerated="true">
         <activity
-            android:name=".MainActivity"
+            android:name=".Stage2IntegrationActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
             android:screenOrientation="portrait">
