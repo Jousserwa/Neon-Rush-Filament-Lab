@@ -319,7 +319,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         float rayZ = -11f * invLength - 0.6f * invLength * ndcY * 0.57735027f;
         float distance = (PILOT_Z - 2f) / rayZ;
         float requestedRootY = 1.6f + rayY * distance - PILOT_HALF_HEIGHT;
-        pilotWorldY = Math.max(0f, Math.min(2.1f, requestedRootY));
+        pilotWorldY = Math.max(0f, Math.min(3.4f, requestedRootY));
 
         int rootInstance = transforms.getInstance(pilotRootEntity);
         float[] rootMatrix = {1,0,0,0, 0,1,0,0, 0,0,1,0, pilotWorldX,pilotWorldY,PILOT_Z,1};
@@ -395,7 +395,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         int w = surface.getWidth(), h = surface.getHeight();
         if (w <= 0 || h <= 0) return;
         // Slight downward pitch keeps the y=0 floor and pilot feet inside the portrait frustum.
-        viewer.getCamera().lookAt(0, 1.6, 2, 0, 1.0, -9, 0, 1, 0);
+        viewer.getCamera().lookAt(0, 1.6, 2, 0, 1.6, -9, 0, 1, 0);
         viewer.setCameraNear(0.1f); viewer.setCameraFar(50f);
         viewer.getCamera().setProjection(60.0, (double) w / h, 0.1, 50.0,
                 com.google.android.filament.Camera.Fov.VERTICAL);
@@ -403,7 +403,10 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
 
     private void updatePilotFromScreen(float normalizedX, float normalizedY) {
         if (viewer == null || destroyed) return;
-        updatePilotTransform(viewer.getEngine().getTransformManager(), normalizedX, normalizedY);
+        // Keep the header and footer clear; the entire intervening playfield is steerable.
+        float playY = Math.max(0.12f, Math.min(0.78f, normalizedY));
+        float mappedY = (playY - 0.12f) / 0.66f;
+        updatePilotTransform(viewer.getEngine().getTransformManager(), normalizedX, mappedY);
     }
 
     private void startLoop() {
@@ -565,7 +568,8 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             }
             if(e.getAction()==MotionEvent.ACTION_MOVE){
                 pilotX=Math.max(0f,Math.min(1f,e.getX()/Math.max(1f,getWidth())));
-                updatePilotFromScreenX(pilotX);
+                pilotY=Math.max(0f,Math.min(1f,e.getY()/Math.max(1f,getHeight())));
+                updatePilotFromScreen(pilotX, pilotY);
                 invalidate();
                 return true;
             }
