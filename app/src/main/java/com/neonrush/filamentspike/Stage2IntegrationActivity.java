@@ -278,7 +278,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         if (current == null || obstacleEntity == 0) return;
         try {
             Engine engine = current.getEngine();
-            current.getScene().removeEntity(obstacleEntity);
+            current.getScene().remove(obstacleEntity);
             engine.getRenderableManager().destroy(obstacleEntity);
             engine.getTransformManager().destroy(obstacleEntity);
             EntityManager.get().destroy(obstacleEntity);
