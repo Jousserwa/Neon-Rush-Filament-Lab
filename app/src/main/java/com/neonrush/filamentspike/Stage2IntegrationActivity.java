@@ -46,6 +46,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private static final float PILOT_HALF_HEIGHT = 0.815f;
     private static final float PILOT_HALF_DEPTH = 0.32f;
     private static final float BASE_HALF_X = 0.325f, BASE_HALF_Y = 0.225f, BASE_HALF_Z = 0.125f;
+    private static final float OBSTACLE_CENTER_X = 0.65f;
+    private static final float OBSTACLE_CENTER_Y = BASE_HALF_Y;
+    private static final float OBSTACLE_HALF_X = BASE_HALF_X, OBSTACLE_HALF_Y = BASE_HALF_Y, OBSTACLE_HALF_Z = BASE_HALF_Z;
 
     private FrameLayout root;
     private SurfaceView surface;
@@ -73,8 +76,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private long statsCallbacks;
     private long statsAccepted;
     private long statsRejected;
-    private long statsRenderCpuNs;
-    private long statsMaxRenderCpuNs;
+    private long statsObstacleUpdateCpuNs;
+    private long statsRenderCallCpuNs;
+    private long statsMaxRenderCallCpuNs;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -254,7 +258,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         TransformManager transforms = engine.getTransformManager();
         transforms.create(obstacleEntity);
         // Center at half-height so the obstacle's bottom sits on the y=0 floor plane.
-        setObstacleTransform(transforms, 1.0f, hy, obstacleZ);
+        setObstacleTransform(transforms, OBSTACLE_CENTER_X, OBSTACLE_CENTER_Y, obstacleZ);
         viewer.getScene().addEntity(obstacleEntity);
     }
 
@@ -352,8 +356,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 : Math.min(0.05f, Math.max(0f,
                     (frameTimeNanos - previousFrameTimeNs) / 1_000_000_000f));
         previousFrameTimeNs = frameTimeNanos;
+        float previousObstacleZ = obstacleZ;
         obstacleZ += OBSTACLE_SPEED_UNITS_PER_SECOND * deltaSeconds;
-        if (!obstacleCollisionReported && overlapsPilotObstacleAabb()) {
+        if (!obstacleCollisionReported && overlapsPilotObstacleAabb(previousObstacleZ, obstacleZ)) {
             Log.i(TAG, "TEST_COLLISION_AABB: pilot and obstacle world-space bounds overlap");
             obstacleCollisionReported = true;
         }
@@ -365,20 +370,20 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             obstacleZ = OBSTACLE_START_Z;
             obstacleCollisionReported = false;
         }
-        setObstacleTransform(viewer.getEngine().getTransformManager(), 0.65f, 1.90f, obstacleZ);
+        setObstacleTransform(viewer.getEngine().getTransformManager(), OBSTACLE_CENTER_X, OBSTACLE_CENTER_Y, obstacleZ);
     }
 
     // Conservative world-space AABB test using the assembled pilot extents and obstacle bounds.
-    private boolean overlapsPilotObstacleAabb() {
-        final float pilotHalfX = PILOT_HALF_WIDTH, pilotMinY = pilotWorldY, pilotMaxY = pilotWorldY + 2f * PILOT_HALF_HEIGHT;
-        final float pilotHalfZ = PILOT_HALF_DEPTH;
-        final float obstacleCenterX = 0.65f, obstacleHalfX = 0.325f;
-        final float obstacleCenterY = 1.90f, obstacleHalfY = 0.225f;
-        final float obstacleHalfZ = 0.125f;
-        boolean x = Math.abs(pilotWorldX - obstacleCenterX) <= pilotHalfX + obstacleHalfX;
-        boolean y = pilotMaxY >= obstacleCenterY - obstacleHalfY
-                && pilotMinY <= obstacleCenterY + obstacleHalfY;
-        boolean z = Math.abs(PILOT_Z - obstacleZ) <= pilotHalfZ + obstacleHalfZ;
+    private boolean overlapsPilotObstacleAabb(float previousZ, float currentZ) {
+        float pilotMinY = pilotWorldY;
+        float pilotMaxY = pilotWorldY + 2f * PILOT_HALF_HEIGHT;
+        boolean x = Math.abs(pilotWorldX - OBSTACLE_CENTER_X) <= PILOT_HALF_WIDTH + OBSTACLE_HALF_X;
+        boolean y = pilotMaxY >= OBSTACLE_CENTER_Y - OBSTACLE_HALF_Y
+                && pilotMinY <= OBSTACLE_CENTER_Y + OBSTACLE_HALF_Y;
+        float sweptMinZ = Math.min(previousZ, currentZ);
+        float sweptMaxZ = Math.max(previousZ, currentZ);
+        boolean z = sweptMaxZ >= PILOT_Z - (PILOT_HALF_DEPTH + OBSTACLE_HALF_Z)
+                && sweptMinZ <= PILOT_Z + (PILOT_HALF_DEPTH + OBSTACLE_HALF_Z);
         return x && y && z;
     }
 
@@ -414,7 +419,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         running = true;
         previousFrameTimeNs = 0L;
         statsWindowStartNs = System.nanoTime();
-        statsCallbacks = statsAccepted = statsRejected = statsRenderCpuNs = statsMaxRenderCpuNs = 0;
+        statsCallbacks = statsAccepted = statsRejected = statsObstacleUpdateCpuNs = statsRenderCallCpuNs = statsMaxRenderCallCpuNs = 0;
         Choreographer.getInstance().postFrameCallback(this);
     }
     private void stopLoop() {
@@ -424,30 +429,31 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     @Override public void doFrame(long frameTimeNanos) {
         ModelViewer current = viewer;
         if (!running || !resumed || current == null || destroyed) return;
-        long renderStartNs = System.nanoTime();
+        long updateStartNs = System.nanoTime();
         try {
             statsCallbacks++;
             update3DObstacle(frameTimeNanos);
+            statsObstacleUpdateCpuNs += System.nanoTime() - updateStartNs;
+            long renderStartNs = System.nanoTime();
             boolean accepted = current.render(frameTimeNanos);
-            long renderCpuNs = System.nanoTime() - renderStartNs;
-            statsRenderCpuNs += renderCpuNs;
-            if (renderCpuNs > statsMaxRenderCpuNs) statsMaxRenderCpuNs = renderCpuNs;
+            long renderCallCpuNs = System.nanoTime() - renderStartNs;
+            statsRenderCallCpuNs += renderCallCpuNs;
+            if (renderCallCpuNs > statsMaxRenderCallCpuNs) statsMaxRenderCallCpuNs = renderCallCpuNs;
             if (accepted) statsAccepted++; else statsRejected++;
 
             long now = System.nanoTime();
             if (now - statsWindowStartNs >= 1_000_000_000L) {
                 double seconds = (now - statsWindowStartNs) / 1_000_000_000.0;
-                double avgMs = statsCallbacks == 0 ? 0 : statsRenderCpuNs / 1_000_000.0 / statsCallbacks;
+                double avgUpdateMs = statsCallbacks == 0 ? 0 : statsObstacleUpdateCpuNs / 1_000_000.0 / statsCallbacks;
+                double avgRenderCallMs = statsCallbacks == 0 ? 0 : statsRenderCallCpuNs / 1_000_000.0 / statsCallbacks;
                 Log.i(TAG, String.format(java.util.Locale.US,
-                        "PERF callbacks/s=%.1f acceptedRender/s=%.1f rejected=%d avgRenderCPUms=%.2f maxRenderCPUms=%.2f",
-                        statsCallbacks / seconds, statsAccepted / seconds, statsRejected, avgMs,
-                        statsMaxRenderCpuNs / 1_000_000.0));
-                if (overlay != null) {
-                    overlay.setDiagnostics(statsCallbacks / seconds, statsAccepted / seconds,
-                            avgMs, statsRejected);
-                }
+                        "PERF callbacks/s=%.1f acceptedRender/s=%.1f rejected=%d avgUpdateCPUms=%.3f avgRenderCallCPUms=%.3f maxRenderCallCPUms=%.3f",
+                        statsCallbacks / seconds, statsAccepted / seconds, statsRejected, avgUpdateMs, avgRenderCallMs,
+                        statsMaxRenderCallCpuNs / 1_000_000.0));
+                if (overlay != null) overlay.setDiagnostics(statsCallbacks / seconds, statsAccepted / seconds,
+                        avgUpdateMs, avgRenderCallMs, statsRejected);
                 statsWindowStartNs = now;
-                statsCallbacks = statsAccepted = statsRejected = statsRenderCpuNs = statsMaxRenderCpuNs = 0;
+                statsCallbacks = statsAccepted = statsRejected = statsObstacleUpdateCpuNs = statsRenderCallCpuNs = statsMaxRenderCallCpuNs = 0;
             }
             if (overlay != null) overlay.invalidate();
             if (running && resumed && viewer == current && !destroyed)
@@ -460,13 +466,10 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
 
     private void releaseObstacleResources() {
         ModelViewer current = viewer;
-        if (current == null || obstacleEntity == 0) return;
+        if (current == null) return;
         try {
             Engine engine = current.getEngine();
-            current.getScene().remove(obstacleEntity);
-            engine.getRenderableManager().destroy(obstacleEntity);
-            engine.getTransformManager().destroy(obstacleEntity);
-            EntityManager.get().destroy(obstacleEntity);
+            destroyOwnedEntity(engine, current, obstacleEntity);
             destroyPilotPart(engine, current, pilotBodyEntity);
             destroyPilotPart(engine, current, pilotHeadEntity);
             destroyPilotPart(engine, current, pilotPackEntity);
@@ -503,11 +506,15 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     }
 
     private void destroyPilotPart(Engine engine, ModelViewer current, int entity) {
+        destroyOwnedEntity(engine, current, entity);
+    }
+
+    private void destroyOwnedEntity(Engine engine, ModelViewer current, int entity) {
         if (entity == 0) return;
-        current.getScene().remove(entity);
-        engine.getRenderableManager().destroy(entity);
-        engine.getTransformManager().destroy(entity);
-        EntityManager.get().destroy(entity);
+        try { current.getScene().remove(entity); } catch (Throwable ignored) { }
+        try { engine.getRenderableManager().destroy(entity); } catch (Throwable ignored) { }
+        try { engine.getTransformManager().destroy(entity); } catch (Throwable ignored) { }
+        try { EntityManager.get().destroy(entity); } catch (Throwable ignored) { }
     }
 
     @Override protected void onResume() {
@@ -535,11 +542,11 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         private float pilotY = 0.70f;
         private long touchDownMs;
         private boolean diagnosticsVisible = true;
-        private double callbacksPerSecond, acceptedPerSecond, renderCpuMs;
+        private double callbacksPerSecond, acceptedPerSecond, updateCpuMs, renderCallCpuMs;
         private long rejectedFrames;
-        void setDiagnostics(double callbacks, double accepted, double cpuMs, long rejected) {
+        void setDiagnostics(double callbacks, double accepted, double updateMs, double renderCallMs, long rejected) {
             callbacksPerSecond = callbacks; acceptedPerSecond = accepted;
-            renderCpuMs = cpuMs; rejectedFrames = rejected;
+            updateCpuMs = updateMs; renderCallCpuMs = renderCallMs; rejectedFrames = rejected;
         }
         PilotOverlay() { super(Stage2IntegrationActivity.this); setBackgroundColor(Color.TRANSPARENT); setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null); }
         @Override protected void onDraw(Canvas c) {
@@ -550,12 +557,13 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             // Footer is a native TextView above the Filament SurfaceView.
             if (diagnosticsVisible) {
                 p.setColor(Color.argb(220, 0, 0, 0));
-                c.drawRect(12, 78, 330, 164, p);
+                c.drawRect(12, 78, 350, 184, p);
                 p.setColor(Color.rgb(100, 255, 210)); p.setTextSize(13);
                 c.drawText(String.format(java.util.Locale.US, "CALLBACKS/s %.1f", callbacksPerSecond), 22, 100, p);
                 c.drawText(String.format(java.util.Locale.US, "ACCEPTED RENDER/s %.1f", acceptedPerSecond), 22, 120, p);
-                c.drawText(String.format(java.util.Locale.US, "AVG RENDER CPU %.2f ms", renderCpuMs), 22, 140, p);
-                c.drawText("REJECTED " + rejectedFrames + "  •  NOT DISPLAY FPS", 22, 158, p);
+                c.drawText(String.format(java.util.Locale.US, "AVG UPDATE CPU %.3f ms", updateCpuMs), 22, 140, p);
+                c.drawText(String.format(java.util.Locale.US, "AVG RENDER CALL CPU %.3f ms", renderCallCpuMs), 22, 158, p);
+                c.drawText("REJECTED " + rejectedFrames + "  •  NOT DISPLAY FPS", 22, 176, p);
             }
         }
         @Override public boolean onTouchEvent(MotionEvent e) {
