@@ -10,7 +10,6 @@ import android.util.Log;
 import android.view.Choreographer;
 import android.view.MotionEvent;
 import android.view.SurfaceView;
-import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
@@ -176,12 +175,12 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         super.onDestroy();
     }
 
-    private final class PilotOverlay extends View {
+    private final class PilotOverlay extends android.view.View {
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         private float pilotX = 0.5f;
         private float pilotY = 0.70f;
         private float downX;
-        PilotOverlay() { super(Stage2IntegrationActivity.this); setBackgroundColor(Color.TRANSPARENT); setLayerType(View.LAYER_TYPE_HARDWARE, null); }
+        PilotOverlay() { super(Stage2IntegrationActivity.this); setBackgroundColor(Color.TRANSPARENT); setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null); }
         @Override protected void onDraw(Canvas c) {
             super.onDraw(c);
             float w = getWidth(), h = getHeight();
