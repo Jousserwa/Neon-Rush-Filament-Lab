@@ -40,6 +40,8 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private static final String TAG = "NRStage2Public";
     private static final float OBSTACLE_START_Z = -8.5f;
     private static final float OBSTACLE_SPEED_UNITS_PER_SECOND = 2.0f;
+    private static final float PILOT_Z = -1.5f;
+    private static final float PILOT_HALF_WIDTH = 0.82f;
 
     private FrameLayout root;
     private SurfaceView surface;
@@ -53,6 +55,10 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
 
     // One reusable Filament renderable: geometry is built once; only its transform moves.
     private int obstacleEntity;
+    private int pilotBodyEntity, pilotHeadEntity, pilotPackEntity;
+    private int pilotLeftArmEntity, pilotRightArmEntity, pilotLeftLegEntity, pilotRightLegEntity;
+    private float pilotWorldX;
+    private boolean obstacleCollisionReported;
     private VertexBuffer obstacleVertices;
     private IndexBuffer obstacleIndices;
     private float obstacleZ = OBSTACLE_START_Z;
@@ -136,6 +142,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             byte[] glb = Base64.decode(new String(encoded, java.nio.charset.StandardCharsets.US_ASCII), Base64.DEFAULT);
             viewer.loadModelGlb(ByteBuffer.wrap(glb));
             create3DObstacle(engine);
+            create3DPilot(engine);
             applyCamera();
         } catch (Throwable e) {
             Log.e(TAG, "Renderer initialization failed", e);
@@ -232,6 +239,67 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         viewer.getScene().addEntity(obstacleEntity);
     }
 
+    private void create3DPilot(Engine engine) {
+        // Primitive low-poly pilot blockout made from actual Filament renderables.
+        pilotBodyEntity = createPilotPart(engine);
+        pilotHeadEntity = createPilotPart(engine);
+        pilotPackEntity = createPilotPart(engine);
+        pilotLeftArmEntity = createPilotPart(engine);
+        pilotRightArmEntity = createPilotPart(engine);
+        pilotLeftLegEntity = createPilotPart(engine);
+        pilotRightLegEntity = createPilotPart(engine);
+        updatePilotTransform(engine.getTransformManager(), 0.5f);
+    }
+
+    private int createPilotPart(Engine engine) {
+        int entity = EntityManager.get().create();
+        new RenderableManager.Builder(1)
+                .geometryType(RenderableManager.Builder.GeometryType.DYNAMIC)
+                .boundingBox(new Box(0f, 0f, 0f, 0.5f, 0.35f, 0.25f))
+                .geometry(0, RenderableManager.PrimitiveType.TRIANGLES,
+                        obstacleVertices, obstacleIndices, 0, 36)
+                .build(engine, entity);
+        engine.getTransformManager().create(entity);
+        viewer.getScene().addEntity(entity);
+        return entity;
+    }
+
+    private void setPilotPart(TransformManager transforms, int entity,
+                              float x, float y, float z, float sx, float sy, float sz) {
+        int instance = transforms.getInstance(entity);
+        float[] matrix = {
+                sx,0,0,0,
+                0,sy,0,0,
+                0,0,sz,0,
+                x,y,z,1
+        };
+        transforms.setTransform(instance, matrix);
+    }
+
+    private void updatePilotTransform(TransformManager transforms, float normalizedX) {
+        float depth = 2.0f - PILOT_Z;
+        float aspect = surface.getHeight() > 0
+                ? (float) surface.getWidth() / (float) surface.getHeight() : 0.5f;
+        float visibleHalfWidth = depth * 0.57735027f * aspect;
+        float requestedX = (normalizedX * 2f - 1f) * visibleHalfWidth;
+        pilotWorldX = Math.max(-PILOT_HALF_WIDTH, Math.min(PILOT_HALF_WIDTH, requestedX));
+
+        setPilotPart(transforms, pilotBodyEntity, pilotWorldX, 0.48f, PILOT_Z,
+                0.27f, 0.68f, 0.34f);
+        setPilotPart(transforms, pilotHeadEntity, pilotWorldX, 0.99f, PILOT_Z,
+                0.30f, 0.38f, 0.48f);
+        setPilotPart(transforms, pilotPackEntity, pilotWorldX, 0.53f, PILOT_Z + 0.19f,
+                0.44f, 0.45f, 0.42f);
+        setPilotPart(transforms, pilotLeftArmEntity, pilotWorldX - 0.31f, 0.52f, PILOT_Z,
+                0.13f, 0.58f, 0.28f);
+        setPilotPart(transforms, pilotRightArmEntity, pilotWorldX + 0.31f, 0.52f, PILOT_Z,
+                0.13f, 0.58f, 0.28f);
+        setPilotPart(transforms, pilotLeftLegEntity, pilotWorldX - 0.12f, 0.16f, PILOT_Z,
+                0.14f, 0.45f, 0.30f);
+        setPilotPart(transforms, pilotRightLegEntity, pilotWorldX + 0.12f, 0.16f, PILOT_Z,
+                0.14f, 0.45f, 0.30f);
+    }
+
     private void setObstacleTransform(TransformManager transforms, float x, float y, float z) {
         int instance = transforms.getInstance(obstacleEntity);
         float[] matrix = {
@@ -252,7 +320,16 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                     (frameTimeNanos - previousFrameTimeNs) / 1_000_000_000f));
         previousFrameTimeNs = frameTimeNanos;
         obstacleZ += OBSTACLE_SPEED_UNITS_PER_SECOND * deltaSeconds;
-        if (obstacleZ > -1.5f) obstacleZ = OBSTACLE_START_Z;
+        if (Math.abs(obstacleZ - PILOT_Z) < 0.42f && !obstacleCollisionReported) {
+            Log.i(TAG, Math.abs(1.0f - pilotWorldX) < 0.78f
+                    ? "TEST_COLLISION: pilot and obstacle bounds overlap"
+                    : "TEST_COLLISION: obstacle passed outside pilot bounds");
+            obstacleCollisionReported = true;
+        }
+        if (obstacleZ > PILOT_Z + 0.65f) {
+            obstacleZ = OBSTACLE_START_Z;
+            obstacleCollisionReported = false;
+        }
         setObstacleTransform(viewer.getEngine().getTransformManager(), 1.0f, 0.35f, obstacleZ);
     }
 
@@ -272,6 +349,11 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         viewer.setCameraNear(0.1f); viewer.setCameraFar(50f);
         viewer.getCamera().setProjection(60.0, (double) w / h, 0.1, 50.0,
                 com.google.android.filament.Camera.Fov.VERTICAL);
+    }
+
+    private void updatePilotFromScreenX(float normalizedX) {
+        if (viewer == null || destroyed) return;
+        updatePilotTransform(viewer.getEngine().getTransformManager(), normalizedX);
     }
 
     private void startLoop() {
@@ -327,15 +409,33 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             engine.getRenderableManager().destroy(obstacleEntity);
             engine.getTransformManager().destroy(obstacleEntity);
             EntityManager.get().destroy(obstacleEntity);
+            destroyPilotPart(engine, current, pilotBodyEntity);
+            destroyPilotPart(engine, current, pilotHeadEntity);
+            destroyPilotPart(engine, current, pilotPackEntity);
+            destroyPilotPart(engine, current, pilotLeftArmEntity);
+            destroyPilotPart(engine, current, pilotRightArmEntity);
+            destroyPilotPart(engine, current, pilotLeftLegEntity);
+            destroyPilotPart(engine, current, pilotRightLegEntity);
             if (obstacleVertices != null) engine.destroyVertexBuffer(obstacleVertices);
             if (obstacleIndices != null) engine.destroyIndexBuffer(obstacleIndices);
         } catch (Throwable e) {
             Log.w(TAG, "Obstacle cleanup skipped because renderer teardown may already have started", e);
         } finally {
             obstacleEntity = 0;
+            pilotBodyEntity = pilotHeadEntity = pilotPackEntity = 0;
+            pilotLeftArmEntity = pilotRightArmEntity = 0;
+            pilotLeftLegEntity = pilotRightLegEntity = 0;
             obstacleVertices = null;
             obstacleIndices = null;
         }
+    }
+
+    private void destroyPilotPart(Engine engine, ModelViewer current, int entity) {
+        if (entity == 0) return;
+        current.getScene().remove(entity);
+        engine.getRenderableManager().destroy(entity);
+        engine.getTransformManager().destroy(entity);
+        EntityManager.get().destroy(entity);
     }
 
     @Override protected void onResume() {
@@ -366,14 +466,21 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             super.onDraw(c);
             float w = getWidth(), h = getHeight();
             float x=pilotX*w, y=pilotY*h;
-            p.setColor(Color.CYAN); c.drawCircle(x,y,Math.min(w,h)*0.035f,p);
-            p.setColor(Color.WHITE); c.drawCircle(x,y,Math.min(w,h)*0.014f,p);
             p.setColor(Color.argb(180,0,229,255)); p.setTextSize(24);
-            c.drawText("DRAG TO STEER  •  3D OBSTACLE TEST", 18, h-28, p);
+            c.drawText("DRAG TO STEER  •  3D PILOT + OBSTACLE", 18, h-28, p);
         }
         @Override public boolean onTouchEvent(MotionEvent e) {
-            if(e.getAction()==MotionEvent.ACTION_DOWN)return true;
-            if(e.getAction()==MotionEvent.ACTION_MOVE){pilotX=Math.max(0.12f,Math.min(0.88f,e.getX()/Math.max(1f,getWidth())));invalidate();return true;}
+            if(e.getAction()==MotionEvent.ACTION_DOWN){
+                pilotX=Math.max(0f,Math.min(1f,e.getX()/Math.max(1f,getWidth())));
+                updatePilotFromScreenX(pilotX);
+                return true;
+            }
+            if(e.getAction()==MotionEvent.ACTION_MOVE){
+                pilotX=Math.max(0f,Math.min(1f,e.getX()/Math.max(1f,getWidth())));
+                updatePilotFromScreenX(pilotX);
+                invalidate();
+                return true;
+            }
             if(e.getAction()==MotionEvent.ACTION_UP){performClick();return true;}
             return true;
         }
