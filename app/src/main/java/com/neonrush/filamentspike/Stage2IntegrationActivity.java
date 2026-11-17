@@ -185,7 +185,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             viewer = new ModelViewer(surface, Engine.create(),
                     new UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK), null);
             Engine engine = viewer.getEngine();
-            int historySize = Math.max(1, engine.getRenderer().getMaxFrameHistorySize());
+            int historySize = Math.max(1, viewer.getRenderer().getMaxFrameHistorySize());
             frameInfoHistory = new Renderer.FrameInfo[historySize];
             for (int i = 0; i < historySize; i++) frameInfoHistory[i] = new Renderer.FrameInfo();
             viewer.getScene().setSkybox(new com.google.android.filament.Skybox.Builder().build(engine));
@@ -358,9 +358,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     }
 
     // Sample Filament's backend GPU duration; this is separate from CPU render-call time.
-    private void sampleFrameInfo(Engine engine) {
+    private void sampleFrameInfo(ModelViewer current) {
         if (frameInfoHistory == null || frameInfoHistory.length == 0) return;
-        int count = engine.getRenderer().getFrameInfoHistory(frameInfoHistory);
+        int count = viewer.getRenderer().getFrameInfoHistory(frameInfoHistory);
         for (int i = 0; i < Math.min(count, frameInfoHistory.length); i++) {
             Renderer.FrameInfo info = frameInfoHistory[i];
             if (info == null || info.frameId <= lastFrameInfoId) continue;
@@ -726,7 +726,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             if (cycleMeasuring) cycleUpdateCpuNs += updateCpuNs;
             long renderStartNs = System.nanoTime();
             boolean accepted = current.render(frameTimeNanos);
-            sampleFrameInfo(current.getEngine());
+            sampleFrameInfo(current);
             long renderCallCpuNs = System.nanoTime() - renderStartNs;
             statsRenderCallCpuNs += renderCallCpuNs;
             if (renderCallCpuNs > statsMaxRenderCallCpuNs) statsMaxRenderCallCpuNs = renderCallCpuNs;
