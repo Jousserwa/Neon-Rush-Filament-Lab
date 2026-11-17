@@ -905,7 +905,6 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             destroyPilotPart(engine, current, pilotRightLegEntity);
             destroyPilotPart(engine, current, pilotVisorEntity);
             destroyPilotPart(engine, current, pilotBaseStripEntity);
-            destroyOwnedEntity(engine, current, obstacleBaseStripEntity);
             if (pilotRootEntity != 0) {
                 engine.getTransformManager().destroy(pilotRootEntity);
                 EntityManager.get().destroy(pilotRootEntity);
