@@ -763,7 +763,8 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                         avgGpuMs, statsMaxGpuFrameDurationNs / 1_000_000.0, statsGpuFrameCount));
                 if (overlay != null) overlay.setDiagnostics(statsCallbacks / seconds, statsAccepted / seconds,
                         avgUpdateMs, avgRenderCallMs, statsRejected, avgCallbackMs,
-                        statsCallbackGaps, thermalStatusName, powerSaveMode, displayRefreshHz);
+                        statsCallbackGaps, thermalStatusName, powerSaveMode, displayRefreshHz,
+                        avgGpuMs, statsMaxGpuFrameDurationNs / 1_000_000.0);
                 resetPerfWindow();
             }
             if (overlay != null) overlay.invalidate();
@@ -995,7 +996,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         private boolean touchOnPanel;
         private String autoTestStatus = "HOLD 0.8s: AUTO PROFILE CSV";
         private double callbacksPerSecond, acceptedPerSecond, updateCpuMs, renderCallCpuMs;
-        private double avgCallbackMs, displayHz;
+        private double avgCallbackMs, displayHz, gpuFrameAvgMs, gpuFrameMaxMs;
         private long rejectedFrames, callbackGaps;
         private String thermalName = "UNKNOWN";
         private boolean powerSave;
@@ -1012,11 +1013,12 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         }
         void setDiagnostics(double callbacks, double accepted, double updateMs, double renderCallMs,
                             long rejected, double callbackMs, long gaps, String thermal,
-                            boolean saveMode, double refreshHz) {
+                            boolean saveMode, double refreshHz, double gpuAvgMs, double gpuMaxMs) {
             callbacksPerSecond = callbacks; acceptedPerSecond = accepted;
             updateCpuMs = updateMs; renderCallCpuMs = renderCallMs; rejectedFrames = rejected;
             avgCallbackMs = callbackMs; callbackGaps = gaps; thermalName = thermal;
             powerSave = saveMode; displayHz = refreshHz;
+            gpuFrameAvgMs = gpuAvgMs; gpuFrameMaxMs = gpuMaxMs;
         }
         PilotOverlay() { super(Stage2IntegrationActivity.this); setBackgroundColor(Color.TRANSPARENT); setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null); }
         @Override protected void onDraw(Canvas c) {
@@ -1027,7 +1029,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             // Footer is a native TextView above the Filament SurfaceView.
             p.setColor(Color.argb(218, 0, 0, 0));
             float panelRight = Math.min(w - 10f, diagnosticsExpanded ? 448f : 322f);
-            float panelBottom = diagnosticsExpanded ? 294f : 137f;
+            float panelBottom = diagnosticsExpanded ? 320f : 137f;
             c.drawRoundRect(12, 76, panelRight, panelBottom, 10f, 10f, p);
             p.setTextSize(11.5f);
             if (!diagnosticsExpanded) {
@@ -1057,7 +1059,10 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 c.drawText(String.format(java.util.Locale.US, "CALLBACK AVG %.2fms | GAPS >1.5x VSYNC %d",
                         avgCallbackMs, callbackGaps), 22, 284, p);
                 p.setColor(Color.rgb(100, 255, 210));
-                c.drawText(autoTestStatus, 22, 300, p);
+                c.drawText(String.format(java.util.Locale.US, "GPU FRAME AVG %.2fms | MAX %.2fms",
+                        gpuFrameAvgMs, gpuFrameMaxMs), 22, 300, p);
+                p.setColor(Color.WHITE);
+                c.drawText(autoTestStatus, 22, 316, p);
             }
         }
         @Override public boolean onTouchEvent(MotionEvent e) {
@@ -1067,7 +1072,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 touchDownY = e.getY();
                 touchMoved = false;
                 touchOnPanel = e.getX() <= Math.min(getWidth() - 10f, diagnosticsExpanded ? 448f : 322f)
-                        && e.getY() >= 70f && e.getY() <= (diagnosticsExpanded ? 310f : 145f);
+                        && e.getY() >= 70f && e.getY() <= (diagnosticsExpanded ? 330f : 145f);
                 if (!touchOnPanel) {
                     pilotX = Math.max(0f, Math.min(1f, e.getX() / Math.max(1f, getWidth())));
                     pilotY = Math.max(0f, Math.min(1f, e.getY() / Math.max(1f, getHeight())));
