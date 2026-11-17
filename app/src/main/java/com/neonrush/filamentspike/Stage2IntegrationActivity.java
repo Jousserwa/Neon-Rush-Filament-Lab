@@ -28,6 +28,7 @@ import com.google.android.filament.MaterialInstance;
 import com.google.android.filament.IndirectLight;
 import com.google.android.filament.LightManager;
 import com.google.android.filament.RenderableManager;
+import com.google.android.filament.Renderer;
 import com.google.android.filament.TransformManager;
 import com.google.android.filament.VertexBuffer;
 import com.google.android.filament.View;
@@ -121,6 +122,11 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private long lastCallbackFrameTimeNs;
     private long statsCallbackIntervalNs;
     private long statsMaxCallbackIntervalNs;
+    private Renderer.FrameInfo[] frameInfoHistory;
+    private int lastFrameInfoId = -1;
+    private long statsGpuFrameDurationNs;
+    private long statsGpuFrameCount;
+    private long statsMaxGpuFrameDurationNs;
     private long statsCallbackGaps;
     private double displayRefreshHz = 60.0;
     private String thermalStatusName = "UNKNOWN";
@@ -179,6 +185,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             viewer = new ModelViewer(surface, Engine.create(),
                     new UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK), null);
             Engine engine = viewer.getEngine();
+            int historySize = Math.max(1, engine.getRenderer().getMaxFrameHistorySize());
+            frameInfoHistory = new Renderer.FrameInfo[historySize];
+            for (int i = 0; i < historySize; i++) frameInfoHistory[i] = new Renderer.FrameInfo();
             viewer.getScene().setSkybox(new com.google.android.filament.Skybox.Builder().build(engine));
             viewer.getScene().getSkybox().setColor(0f, 0f, 0.1f, 1f);
             viewer.getCamera().setExposure(16f, 1f / 125f, 100f);
@@ -344,7 +353,25 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         statsCallbacks = statsAccepted = statsRejected = 0;
         statsObstacleUpdateCpuNs = statsRenderCallCpuNs = statsMaxRenderCallCpuNs = 0;
         statsCallbackIntervalNs = statsMaxCallbackIntervalNs = statsCallbackGaps = 0;
+        statsGpuFrameDurationNs = statsGpuFrameCount = statsMaxGpuFrameDurationNs = 0L;
         lastCallbackFrameTimeNs = 0L;
+    }
+
+    // Sample Filament's backend GPU duration; this is separate from CPU render-call time.
+    private void sampleFrameInfo(Engine engine) {
+        if (frameInfoHistory == null || frameInfoHistory.length == 0) return;
+        int count = engine.getRenderer().getFrameInfoHistory(frameInfoHistory);
+        for (int i = 0; i < Math.min(count, frameInfoHistory.length); i++) {
+            Renderer.FrameInfo info = frameInfoHistory[i];
+            if (info == null || info.frameId <= lastFrameInfoId) continue;
+            lastFrameInfoId = info.frameId;
+            long gpuNs = info.denoisedGpuFrameDuration > 0 ? info.denoisedGpuFrameDuration : info.gpuFrameDuration;
+            if (gpuNs > 0) {
+                statsGpuFrameDurationNs += gpuNs;
+                statsGpuFrameCount++;
+                if (gpuNs > statsMaxGpuFrameDurationNs) statsMaxGpuFrameDurationNs = gpuNs;
+            }
+        }
     }
 
     private void viewSceneAdd(int entity) {
@@ -699,6 +726,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             if (cycleMeasuring) cycleUpdateCpuNs += updateCpuNs;
             long renderStartNs = System.nanoTime();
             boolean accepted = current.render(frameTimeNanos);
+            sampleFrameInfo(current.getEngine());
             long renderCallCpuNs = System.nanoTime() - renderStartNs;
             statsRenderCallCpuNs += renderCallCpuNs;
             if (renderCallCpuNs > statsMaxRenderCallCpuNs) statsMaxRenderCallCpuNs = renderCallCpuNs;
@@ -718,12 +746,15 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 updateDeviceConditions();
                 String profileSettings = activeSettingsLine1() + " | " + activeSettingsLine2()
                         + " | " + activeSettingsLine3();
+                double avgGpuMs = statsGpuFrameCount == 0 ? 0
+                        : statsGpuFrameDurationNs / 1_000_000.0 / statsGpuFrameCount;
                 Log.i(TAG, String.format(java.util.Locale.US,
-                        "PERF profile=%s settings=[%s] thermal=%s powerSave=%s displayHz=%.1f callbacks/s=%.1f acceptedRender/s=%.1f false=%d callbackAvgMs=%.2f callbackMaxMs=%.2f callbackGaps=%d avgUpdateCPUms=%.3f avgRenderCallCPUms=%.3f maxRenderCallCPUms=%.3f",
+                        "PERF profile=%s settings=[%s] thermal=%s powerSave=%s displayHz=%.1f callbacks/s=%.1f acceptedRender/s=%.1f false=%d callbackAvgMs=%.2f callbackMaxMs=%.2f callbackGaps=%d avgUpdateCPUms=%.3f avgRenderCallCPUms=%.3f maxRenderCallCPUms=%.3f gpuFrameAvgMs=%.3f gpuFrameMaxMs=%.3f gpuSamples=%d",
                         PERF_PROFILE_NAMES[perfProfile], profileSettings, thermalStatusName, powerSaveMode,
                         displayRefreshHz, statsCallbacks / seconds, statsAccepted / seconds, statsRejected,
                         avgCallbackMs, statsMaxCallbackIntervalNs / 1_000_000.0, statsCallbackGaps,
-                        avgUpdateMs, avgRenderCallMs, statsMaxRenderCallCpuNs / 1_000_000.0));
+                        avgUpdateMs, avgRenderCallMs, statsMaxRenderCallCpuNs / 1_000_000.0,
+                        avgGpuMs, statsMaxGpuFrameDurationNs / 1_000_000.0, statsGpuFrameCount));
                 if (overlay != null) overlay.setDiagnostics(statsCallbacks / seconds, statsAccepted / seconds,
                         avgUpdateMs, avgRenderCallMs, statsRejected, avgCallbackMs,
                         statsCallbackGaps, thermalStatusName, powerSaveMode, displayRefreshHz);
@@ -851,6 +882,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         if (current == null) return;
         try {
             Engine engine = current.getEngine();
+            destroyOwnedEntity(engine, current, obstacleBaseStripEntity);
             destroyOwnedEntity(engine, current, obstacleEntity);
             destroyPilotPart(engine, current, pilotBodyEntity);
             destroyPilotPart(engine, current, pilotHeadEntity);
@@ -892,6 +924,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             pilotLeftLegEntity = pilotRightLegEntity = 0;
             obstacleVertices = null;
             obstacleIndices = null;
+            frameInfoHistory = null;
             pilotMaterialInstance = null;
             obstacleMaterialInstance = null;
             cyanTrimMaterialInstance = null;
