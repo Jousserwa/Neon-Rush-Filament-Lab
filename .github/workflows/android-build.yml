@@ -5,6 +5,7 @@ on:
     branches: [main, stage2-public-integration]
     paths:
       - "app/**"
+      - "STAGE2_PUBLIC_LAB.md"
       - "*.gradle.kts"
       - "gradle.properties"
       - ".github/workflows/android-build.yml"
