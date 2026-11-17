@@ -338,13 +338,13 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         pilotMaterialInstance.setParameter("baseColor", 0.105f, 0.135f, 0.16f, 1.0f);
         pilotMaterialInstance.setParameter("metallic", 0.56f);
         pilotMaterialInstance.setParameter("roughness", 0.46f);
-        pilotMaterialInstance.setParameter("emissive", 0.003f, 0.022f, 0.030f);
+        pilotMaterialInstance.setParameter("emissive", 0.003f, 0.022f, 0.030f, 1.0f);
 
         obstacleMaterialInstance = blockoutMaterial.createInstance("Stage2ObstacleAmber");
         obstacleMaterialInstance.setParameter("baseColor", 0.19f, 0.078f, 0.025f, 1.0f);
         obstacleMaterialInstance.setParameter("metallic", 0.28f);
         obstacleMaterialInstance.setParameter("roughness", 0.58f);
-        obstacleMaterialInstance.setParameter("emissive", 0.055f, 0.018f, 0.002f);
+        obstacleMaterialInstance.setParameter("emissive", 0.055f, 0.018f, 0.002f, 1.0f);
     }
 
     private void create3DObstacle(Engine engine) {
