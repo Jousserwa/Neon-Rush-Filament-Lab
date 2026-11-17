@@ -412,13 +412,13 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         cyanTrimMaterialInstance.setParameter("baseColor", 0.025f, 0.22f, 0.27f, 1.0f);
         cyanTrimMaterialInstance.setParameter("metallic", 0.05f);
         cyanTrimMaterialInstance.setParameter("roughness", 0.48f);
-        cyanTrimMaterialInstance.setParameter("emissive", 0.004f, 0.035f, 0.045f, 1.0f);
+        cyanTrimMaterialInstance.setParameter("emissive", 1.25f, 2.2f, 2.6f, 1.0f);
 
         amberTrimMaterialInstance = blockoutMaterial.createInstance("Stage2ObstacleAmberTrim");
         amberTrimMaterialInstance.setParameter("baseColor", 0.30f, 0.10f, 0.018f, 1.0f);
         amberTrimMaterialInstance.setParameter("metallic", 0.05f);
         amberTrimMaterialInstance.setParameter("roughness", 0.52f);
-        amberTrimMaterialInstance.setParameter("emissive", 0.025f, 0.008f, 0.001f, 1.0f);
+        amberTrimMaterialInstance.setParameter("emissive", 1.4f, 0.42f, 0.06f, 1.0f);
     }
 
     private void create3DObstacle(Engine engine) {
@@ -504,7 +504,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         transforms.create(obstacleEntity);
         // A narrow amber emissive foot strip gives a readable floor contact cue without shadow maps.
         obstacleBaseStripEntity = createAttachedTrim(engine, obstacleEntity, amberTrimMaterialInstance,
-                0f, -0.217f, 0f, 0.34f, 0.008f, 0.14f);
+                0f, -0.218f, 0f, 0.295f, 0.006f, 0.112f);
         // Center at half-height so the obstacle's bottom sits on the y=0 floor plane.
         setObstacleTransform(transforms, OBSTACLE_CENTER_X, OBSTACLE_CENTER_Y, obstacleZ);
         viewer.getScene().addEntity(obstacleEntity);
