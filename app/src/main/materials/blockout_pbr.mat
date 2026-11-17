@@ -15,7 +15,7 @@ material {
             name : roughness
         },
         {
-            type : float4,
+            type : float3,
             name : emissive
         }
     ],
