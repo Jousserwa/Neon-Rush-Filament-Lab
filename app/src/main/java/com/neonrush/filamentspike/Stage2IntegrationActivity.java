@@ -466,7 +466,16 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         float rayZ = -11f * invLength - 0.6f * invLength * ndcY * 0.57735027f;
         float distance = (PILOT_Z - 2f) / rayZ;
         float requestedRootY = 1.6f + rayY * distance - PILOT_HALF_HEIGHT;
-        pilotWorldY = Math.max(0f, Math.min(3.4f, requestedRootY));
+
+        // Keep the COMPLETE pilot inside the camera's visible vertical frustum.
+        // Root Y is the pilot's foot/base height; local geometry spans 0..1.63.
+        // Derive the upper bound at the pilot depth rather than using an
+        // arbitrary large value that lets the head disappear above the screen.
+        float visibleTopY = 1.6f + depth * 0.57735027f;
+        float pilotFullHeight = PILOT_HALF_HEIGHT * 2.0f;
+        float topSafetyMargin = 0.18f;
+        float maxPilotRootY = Math.max(0f, visibleTopY - pilotFullHeight - topSafetyMargin);
+        pilotWorldY = Math.max(0f, Math.min(maxPilotRootY, requestedRootY));
 
         int rootInstance = transforms.getInstance(pilotRootEntity);
         float[] rootMatrix = {1,0,0,0, 0,1,0,0, 0,0,1,0, pilotWorldX,pilotWorldY,PILOT_Z,1};
