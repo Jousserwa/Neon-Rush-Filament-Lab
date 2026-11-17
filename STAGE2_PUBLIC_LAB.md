@@ -32,3 +32,10 @@ The GitHub Actions workflow builds the debug APK, uploads it as the `stage2-publ
 - Do not add Firebase, RevenueCat, AdMob production configuration, API keys, passwords, signing keys, or private endpoints.
 - Use synthetic test data only.
 - Keep the actual production repository and the private full-game integration repository unchanged.
+
+
+## Stage 2 blockout materials
+
+The pilot and moving obstacle use separate parameter instances of one small Filament lit/PBR material. The pilot uses dark graphite with restrained cyan emissive detail; the obstacle uses dark amber with a restrained warm emissive contribution. This is a visual blockout material pass, not final character or obstacle art.
+
+The source material is `app/src/main/materials/blockout_pbr.mat`. GitHub Actions downloads the official Filament **v1.80.1** Linux tools, verifies the release archive SHA-256, and compiles a mobile-target `.filamat` using the same version as the Android runtime. The compiled package is generated into the APK assets during CI; the shader compiler itself is not included in the APK. Build test APKs from the Actions artifact, not from an unprepared local Gradle build.

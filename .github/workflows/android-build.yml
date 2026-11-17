@@ -47,6 +47,23 @@ jobs:
         with:
           gradle-version: "9.3.1"
 
+      - name: Compile Filament material with the matching 1.80.1 toolchain
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/filament-v1.80.1-linux.tgz"
+          curl --fail --location --retry 3 --output "$archive" \
+            https://github.com/google/filament/releases/download/v1.80.1/filament-v1.80.1-linux.tgz
+          echo "c2f46496ba5707605f0459d8714d34c73296fbfd7fcfdbe4c1a00b76607da193  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/filament-tools"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/filament-tools"
+          MATC="$(find "$RUNNER_TEMP/filament-tools" -type f -name matc -print -quit)"
+          test -n "$MATC"
+          chmod +x "$MATC"
+          mkdir -p app/src/main/assets
+          "$MATC" -p mobile -a all -S \
+            -o app/src/main/assets/blockout_pbr.filamat \
+            app/src/main/materials/blockout_pbr.mat
+
       - name: Build debug APK
         run: gradle :app:assembleDebug --no-daemon
 

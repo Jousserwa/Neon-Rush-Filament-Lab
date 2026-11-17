@@ -19,6 +19,8 @@ import com.google.android.filament.Box;
 import com.google.android.filament.Engine;
 import com.google.android.filament.EntityManager;
 import com.google.android.filament.IndexBuffer;
+import com.google.android.filament.Material;
+import com.google.android.filament.MaterialInstance;
 import com.google.android.filament.IndirectLight;
 import com.google.android.filament.LightManager;
 import com.google.android.filament.RenderableManager;
@@ -77,6 +79,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private float pilotWorldY;
     private boolean obstacleCollisionReported;
     private VertexBuffer obstacleVertices;
+    private Material blockoutMaterial;
+    private MaterialInstance pilotMaterialInstance;
+    private MaterialInstance obstacleMaterialInstance;
     private IndexBuffer obstacleIndices;
     private float obstacleZ = OBSTACLE_START_Z;
     private long previousFrameTimeNs;
@@ -176,6 +181,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                     .intensity(20000f).build(engine);
             viewer.getScene().setIndirectLight(ambient);
 
+            createBlockoutMaterials(engine);
             byte[] encoded = readAsset("corridor.glb.b64");
             byte[] glb = Base64.decode(new String(encoded, java.nio.charset.StandardCharsets.US_ASCII), Base64.DEFAULT);
             viewer.loadModelGlb(ByteBuffer.wrap(glb));
@@ -319,6 +325,28 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         if (viewer != null) viewer.getScene().remove(entity);
     }
 
+
+    // One compact, precompiled Filament material is shared by two tuned instances.
+    // The compiler runs in GitHub Actions; no shader compiler is shipped in the APK.
+    private void createBlockoutMaterials(Engine engine) throws Exception {
+        ByteBuffer payload = ByteBuffer.wrap(readAsset("blockout_pbr.filamat"));
+        blockoutMaterial = new Material.Builder()
+                .payload(payload, payload.remaining())
+                .build(engine);
+
+        pilotMaterialInstance = blockoutMaterial.createInstance("Stage2PilotGraphite");
+        pilotMaterialInstance.setParameter("baseColor", 0.105f, 0.135f, 0.16f, 1.0f);
+        pilotMaterialInstance.setParameter("metallic", 0.56f);
+        pilotMaterialInstance.setParameter("roughness", 0.46f);
+        pilotMaterialInstance.setParameter("emissive", 0.003f, 0.022f, 0.030f, 1.0f);
+
+        obstacleMaterialInstance = blockoutMaterial.createInstance("Stage2ObstacleAmber");
+        obstacleMaterialInstance.setParameter("baseColor", 0.19f, 0.078f, 0.025f, 1.0f);
+        obstacleMaterialInstance.setParameter("metallic", 0.28f);
+        obstacleMaterialInstance.setParameter("roughness", 0.58f);
+        obstacleMaterialInstance.setParameter("emissive", 0.055f, 0.018f, 0.002f, 1.0f);
+    }
+
     private void create3DObstacle(Engine engine) {
         // Flat-shaded rectangular obstacle: 1.0 wide x 0.7 high x 0.5 deep.
         // Each face owns four vertices so its normal remains perpendicular to that face.
@@ -395,7 +423,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 .boundingBox(new Box(0f, 0f, 0f, hx, hy, hz))
                 .geometry(0, RenderableManager.PrimitiveType.TRIANGLES,
                         obstacleVertices, obstacleIndices, 0, indices.length)
-                // A deliberate fallback material remains until a compiled PBR material is added.
+                .material(0, obstacleMaterialInstance)
                 .build(engine, obstacleEntity);
 
         TransformManager transforms = engine.getTransformManager();
@@ -426,6 +454,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 .boundingBox(new Box(0f, 0f, 0f, BASE_HALF_X, BASE_HALF_Y, BASE_HALF_Z))
                 .geometry(0, RenderableManager.PrimitiveType.TRIANGLES,
                         obstacleVertices, obstacleIndices, 0, 36)
+                .material(0, pilotMaterialInstance)
                 .build(engine, entity);
         TransformManager transforms = engine.getTransformManager();
         int childInstance = transforms.getInstance(entity);
@@ -648,6 +677,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 engine.getTransformManager().destroy(pilotRootEntity);
                 EntityManager.get().destroy(pilotRootEntity);
             }
+            if (pilotMaterialInstance != null) engine.destroyMaterialInstance(pilotMaterialInstance);
+            if (obstacleMaterialInstance != null) engine.destroyMaterialInstance(obstacleMaterialInstance);
+            if (blockoutMaterial != null) engine.destroyMaterial(blockoutMaterial);
             if (obstacleVertices != null) engine.destroyVertexBuffer(obstacleVertices);
             if (obstacleIndices != null) engine.destroyIndexBuffer(obstacleIndices);
 
@@ -669,6 +701,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             pilotLeftLegEntity = pilotRightLegEntity = 0;
             obstacleVertices = null;
             obstacleIndices = null;
+            pilotMaterialInstance = null;
+            obstacleMaterialInstance = null;
+            blockoutMaterial = null;
         }
     }
 

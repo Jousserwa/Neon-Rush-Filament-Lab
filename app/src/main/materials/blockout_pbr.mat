@@ -1,0 +1,33 @@
+material {
+    name : "NeonRush Stage2 Blockout PBR",
+    shadingModel : lit,
+    parameters : [
+        {
+            type : float4,
+            name : baseColor
+        },
+        {
+            type : float,
+            name : metallic
+        },
+        {
+            type : float,
+            name : roughness
+        },
+        {
+            type : float4,
+            name : emissive
+        }
+    ],
+    specularAntiAliasing : true
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        material.baseColor = materialParams.baseColor;
+        material.metallic = materialParams.metallic;
+        material.roughness = materialParams.roughness;
+        material.emissive = materialParams.emissive;
+    }
+}
