@@ -1,10 +1,13 @@
 package com.neonrush.filamentspike;
 
 import android.app.Activity;
+import android.content.ContentValues;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Build;
 import android.os.PowerManager;
 import android.util.Base64;
@@ -14,6 +17,7 @@ import android.view.MotionEvent;
 import android.view.SurfaceView;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.google.android.filament.Box;
 import com.google.android.filament.Engine;
@@ -33,8 +37,10 @@ import com.google.android.filament.gltfio.Gltfio;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
 
 /**
  * Public, non-proprietary Stage 2 integration harness.
@@ -64,11 +70,28 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private boolean initializing;
     private PilotOverlay overlay;
     private int perfProfile = 0;
+    // The timed sweep separates the two AA paths instead of treating "MSAA off"
+    // and "FXAA only" as different configurations (they are the same setting).
     private static final String[] PERF_PROFILE_NAMES = {
-            "FULL BASELINE", "BLOOM OFF", "MSAA OFF", "FXAA OFF",
-            "DYNAMIC 75-100%", "FIXED 75%", "FIXED 65%",
-            "CORRIDOR ONLY", "CORRIDOR + PILOT", "CORRIDOR + OBSTACLE"
+            "FULL BASELINE",
+            "MSAA OFF / FXAA ONLY",
+            "MSAA ONLY / FXAA OFF",
+            "NO AA",
+            "BLOOM OFF",
+            "BLOOM LOW RES",
+            "DYNAMIC 75-85%",
+            "CORRIDOR ONLY"
     };
+    private static final long PROFILE_WARMUP_MS = 2000L;
+    private static final long PROFILE_MEASURE_MS = 5000L;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private boolean autoProfileCycleRunning;
+    private boolean cycleMeasuring;
+    private int cycleProfileIndex;
+    private long cycleStartNs;
+    private long cycleCallbacks, cycleAccepted, cycleRejected;
+    private long cycleUpdateCpuNs, cycleRenderCpuNs, cycleCallbackIntervalNs, cycleCallbackGaps;
+    private final ArrayList<String> cycleCsvRows = new ArrayList<>();
 
     // One reusable Filament renderable: geometry is built once; only its transform moves.
     private int obstacleEntity;
@@ -82,6 +105,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private Material blockoutMaterial;
     private MaterialInstance pilotMaterialInstance;
     private MaterialInstance obstacleMaterialInstance;
+    private MaterialInstance cyanTrimMaterialInstance;
+    private MaterialInstance amberTrimMaterialInstance;
+    private int pilotVisorEntity, pilotBaseStripEntity, obstacleBaseStripEntity;
     private IndexBuffer obstacleIndices;
     private float obstacleZ = OBSTACLE_START_Z;
     private long previousFrameTimeNs;
@@ -205,18 +231,18 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         if (viewer == null) return;
         View view = viewer.getView();
 
-        boolean bloomEnabled = perfProfile != 1;
-        boolean msaaEnabled = perfProfile != 2;
-        boolean fxaaEnabled = perfProfile != 3;
-        boolean dynamicEnabled = perfProfile == 4 || perfProfile == 5 || perfProfile == 6;
-        float minScale = perfProfile == 4 ? 0.75f : (perfProfile == 6 ? 0.65f : 0.75f);
-        float maxScale = perfProfile == 4 ? 1.00f : (perfProfile == 5 ? 0.75f : (perfProfile == 6 ? 0.65f : 1.00f));
+        boolean bloomEnabled = perfProfile != 4;
+        boolean msaaEnabled = perfProfile == 0 || perfProfile == 2;
+        boolean fxaaEnabled = perfProfile == 0 || perfProfile == 1;
+        boolean dynamicEnabled = perfProfile == 6;
+        float minScale = 0.75f;
+        float maxScale = 0.85f;
 
         View.BloomOptions bloom = new View.BloomOptions();
         bloom.enabled = bloomEnabled;
         bloom.strength = 0.24f;
-        bloom.resolution = 192;
-        bloom.levels = 4;
+        bloom.resolution = perfProfile == 5 ? 96 : 192;
+        bloom.levels = perfProfile == 5 ? 2 : 4;
         bloom.threshold = true;
         bloom.quality = View.QualityLevel.LOW;
         bloom.lensFlare = false;
@@ -242,16 +268,20 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         view.setAmbientOcclusionOptions(ao);
         view.setShadowingEnabled(false);
 
-        boolean showPilot = perfProfile != 7 && perfProfile != 9;
-        boolean showObstacle = perfProfile != 7 && perfProfile != 8;
+        boolean showPilot = perfProfile != 7;
+        boolean showObstacle = perfProfile != 7;
         int[] pilotParts = {pilotBodyEntity, pilotHeadEntity, pilotPackEntity,
-                pilotLeftArmEntity, pilotRightArmEntity, pilotLeftLegEntity, pilotRightLegEntity};
+                pilotLeftArmEntity, pilotRightArmEntity, pilotLeftLegEntity, pilotRightLegEntity,
+                pilotVisorEntity, pilotBaseStripEntity};
         for (int entity : pilotParts) {
             if (entity == 0) continue;
             if (showPilot) viewSceneAdd(entity); else viewSceneRemove(entity);
         }
         if (obstacleEntity != 0) {
             if (showObstacle) viewSceneAdd(obstacleEntity); else viewSceneRemove(obstacleEntity);
+        }
+        if (obstacleBaseStripEntity != 0) {
+            if (showObstacle) viewSceneAdd(obstacleBaseStripEntity); else viewSceneRemove(obstacleBaseStripEntity);
         }
         if (overlay != null) {
             overlay.setPerfProfile(PERF_PROFILE_NAMES[perfProfile], activeSettingsLine1(),
@@ -260,21 +290,20 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     }
 
     private String activeSettingsLine1() {
-        return "BLOOM " + (perfProfile == 1 ? "OFF" : "ON")
-                + " | MSAA " + (perfProfile == 2 ? "OFF" : "2X")
-                + " | FXAA " + (perfProfile == 3 ? "OFF" : "ON");
+        String bloom = perfProfile == 4 ? "OFF" : (perfProfile == 5 ? "LOW 96PX" : "ON");
+        String msaa = (perfProfile == 0 || perfProfile == 2) ? "2X" : "OFF";
+        String fxaa = (perfProfile == 0 || perfProfile == 1) ? "ON" : "OFF";
+        return "BLOOM " + bloom + " | MSAA " + msaa + " | FXAA " + fxaa;
     }
 
     private String activeSettingsLine2() {
-        if (perfProfile == 4) return "DYNAMIC 75-100% | SSAO OFF | SHADOWS OFF";
-        if (perfProfile == 5) return "FIXED 75% | SSAO OFF | SHADOWS OFF";
-        if (perfProfile == 6) return "FIXED 65% | SSAO OFF | SHADOWS OFF";
+        if (perfProfile == 6) return "DYNAMIC 75-85% | SSAO OFF | SHADOWS OFF";
         return "DYNAMIC OFF 100% | SSAO OFF | SHADOWS OFF";
     }
 
     private String activeSettingsLine3() {
-        boolean showPilot = perfProfile != 7 && perfProfile != 9;
-        boolean showObstacle = perfProfile != 7 && perfProfile != 8;
+        boolean showPilot = perfProfile != 7;
+        boolean showObstacle = perfProfile != 7;
         return "PILOT " + (showPilot ? "ON" : "OFF")
                 + " | OBSTACLE " + (showObstacle ? "ON" : "OFF");
     }
@@ -335,16 +364,28 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 .build(engine);
 
         pilotMaterialInstance = blockoutMaterial.createInstance("Stage2PilotGraphite");
-        pilotMaterialInstance.setParameter("baseColor", 0.105f, 0.135f, 0.16f, 1.0f);
-        pilotMaterialInstance.setParameter("metallic", 0.56f);
-        pilotMaterialInstance.setParameter("roughness", 0.46f);
-        pilotMaterialInstance.setParameter("emissive", 0.003f, 0.022f, 0.030f, 1.0f);
+        pilotMaterialInstance.setParameter("baseColor", 0.15f, 0.18f, 0.21f, 1.0f);
+        pilotMaterialInstance.setParameter("metallic", 0.05f);
+        pilotMaterialInstance.setParameter("roughness", 0.62f);
+        pilotMaterialInstance.setParameter("emissive", 0.0015f, 0.010f, 0.014f, 1.0f);
 
         obstacleMaterialInstance = blockoutMaterial.createInstance("Stage2ObstacleAmber");
-        obstacleMaterialInstance.setParameter("baseColor", 0.19f, 0.078f, 0.025f, 1.0f);
-        obstacleMaterialInstance.setParameter("metallic", 0.28f);
-        obstacleMaterialInstance.setParameter("roughness", 0.58f);
-        obstacleMaterialInstance.setParameter("emissive", 0.055f, 0.018f, 0.002f, 1.0f);
+        obstacleMaterialInstance.setParameter("baseColor", 0.32f, 0.12f, 0.035f, 1.0f);
+        obstacleMaterialInstance.setParameter("metallic", 0.05f);
+        obstacleMaterialInstance.setParameter("roughness", 0.62f);
+        obstacleMaterialInstance.setParameter("emissive", 0.015f, 0.005f, 0.0005f, 1.0f);
+
+        cyanTrimMaterialInstance = blockoutMaterial.createInstance("Stage2PilotCyanTrim");
+        cyanTrimMaterialInstance.setParameter("baseColor", 0.025f, 0.22f, 0.27f, 1.0f);
+        cyanTrimMaterialInstance.setParameter("metallic", 0.05f);
+        cyanTrimMaterialInstance.setParameter("roughness", 0.48f);
+        cyanTrimMaterialInstance.setParameter("emissive", 0.004f, 0.035f, 0.045f, 1.0f);
+
+        amberTrimMaterialInstance = blockoutMaterial.createInstance("Stage2ObstacleAmberTrim");
+        amberTrimMaterialInstance.setParameter("baseColor", 0.30f, 0.10f, 0.018f, 1.0f);
+        amberTrimMaterialInstance.setParameter("metallic", 0.05f);
+        amberTrimMaterialInstance.setParameter("roughness", 0.52f);
+        amberTrimMaterialInstance.setParameter("emissive", 0.025f, 0.008f, 0.001f, 1.0f);
     }
 
     private void create3DObstacle(Engine engine) {
@@ -428,6 +469,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
 
         TransformManager transforms = engine.getTransformManager();
         transforms.create(obstacleEntity);
+        // A narrow amber emissive foot strip gives a readable floor contact cue without shadow maps.
+        obstacleBaseStripEntity = createAttachedTrim(engine, obstacleEntity, amberTrimMaterialInstance,
+                0f, -0.217f, 0f, 0.34f, 0.008f, 0.14f);
         // Center at half-height so the obstacle's bottom sits on the y=0 floor plane.
         setObstacleTransform(transforms, OBSTACLE_CENTER_X, OBSTACLE_CENTER_Y, obstacleZ);
         viewer.getScene().addEntity(obstacleEntity);
@@ -444,6 +488,11 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         pilotRightArmEntity = createPilotPart(engine);
         pilotLeftLegEntity = createPilotPart(engine);
         pilotRightLegEntity = createPilotPart(engine);
+        // Small cyan visor and floor strip are separate low-cost renderables.
+        pilotVisorEntity = createAttachedTrim(engine, pilotRootEntity, cyanTrimMaterialInstance,
+                0f, 1.43f, 0.188f, 0.145f, 0.035f, 0.014f);
+        pilotBaseStripEntity = createAttachedTrim(engine, pilotRootEntity, cyanTrimMaterialInstance,
+                0f, 0.018f, 0f, 0.31f, 0.008f, 0.18f);
         updatePilotTransform(engine.getTransformManager(), 0.5f, 0.56f);
     }
 
@@ -460,6 +509,24 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         int childInstance = transforms.getInstance(entity);
         int rootInstance = transforms.getInstance(pilotRootEntity);
         transforms.setParent(childInstance, rootInstance);
+        viewer.getScene().addEntity(entity);
+        return entity;
+    }
+
+    private int createAttachedTrim(Engine engine, int parentEntity, MaterialInstance material,
+                                   float x, float y, float z, float halfX, float halfY, float halfZ) {
+        int entity = EntityManager.get().create();
+        new RenderableManager.Builder(1)
+                .geometryType(RenderableManager.Builder.GeometryType.DYNAMIC)
+                .boundingBox(new Box(0f, 0f, 0f, BASE_HALF_X, BASE_HALF_Y, BASE_HALF_Z))
+                .geometry(0, RenderableManager.PrimitiveType.TRIANGLES,
+                        obstacleVertices, obstacleIndices, 0, 36)
+                .material(0, material)
+                .build(engine, entity);
+        TransformManager transforms = engine.getTransformManager();
+        int child = transforms.getInstance(entity);
+        transforms.setParent(child, transforms.getInstance(parentEntity));
+        setPilotPart(transforms, entity, x, y, z, halfX, halfY, halfZ);
         viewer.getScene().addEntity(entity);
         return entity;
     }
@@ -619,16 +686,27 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 if (callbackInterval > statsMaxCallbackIntervalNs) statsMaxCallbackIntervalNs = callbackInterval;
                 double expectedPeriodNs = displayRefreshHz > 0.0 ? 1_000_000_000.0 / displayRefreshHz : 16_666_667.0;
                 if (callbackInterval > expectedPeriodNs * 1.5) statsCallbackGaps++;
+                if (cycleMeasuring) {
+                    cycleCallbackIntervalNs += callbackInterval;
+                    if (callbackInterval > expectedPeriodNs * 1.5) cycleCallbackGaps++;
+                }
             }
+            if (cycleMeasuring) cycleCallbacks++;
             lastCallbackFrameTimeNs = frameTimeNanos;
             update3DObstacle(frameTimeNanos);
-            statsObstacleUpdateCpuNs += System.nanoTime() - updateStartNs;
+            long updateCpuNs = System.nanoTime() - updateStartNs;
+            statsObstacleUpdateCpuNs += updateCpuNs;
+            if (cycleMeasuring) cycleUpdateCpuNs += updateCpuNs;
             long renderStartNs = System.nanoTime();
             boolean accepted = current.render(frameTimeNanos);
             long renderCallCpuNs = System.nanoTime() - renderStartNs;
             statsRenderCallCpuNs += renderCallCpuNs;
             if (renderCallCpuNs > statsMaxRenderCallCpuNs) statsMaxRenderCallCpuNs = renderCallCpuNs;
             if (accepted) statsAccepted++; else statsRejected++;
+            if (cycleMeasuring) {
+                if (accepted) cycleAccepted++; else cycleRejected++;
+                cycleRenderCpuNs += renderCallCpuNs;
+            }
 
             long now = System.nanoTime();
             if (now - statsWindowStartNs >= 1_000_000_000L) {
@@ -660,6 +738,114 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         }
     }
 
+    private void resetCycleMeasurement() {
+        cycleCallbacks = cycleAccepted = cycleRejected = 0L;
+        cycleUpdateCpuNs = cycleRenderCpuNs = cycleCallbackIntervalNs = cycleCallbackGaps = 0L;
+        cycleStartNs = System.nanoTime();
+        cycleMeasuring = true;
+        resetPerfWindow();
+    }
+
+    private void startAutomatedProfileCycle() {
+        if (autoProfileCycleRunning || viewer == null || !resumed || destroyed) return;
+        autoProfileCycleRunning = true;
+        cycleMeasuring = false;
+        cycleProfileIndex = 0;
+        cycleCsvRows.clear();
+        overlay.setAutoTestStatus("AUTO TEST: warming up");
+        startCurrentCycleProfile();
+    }
+
+    private void startCurrentCycleProfile() {
+        if (!autoProfileCycleRunning || viewer == null || destroyed) return;
+        perfProfile = cycleProfileIndex;
+        applyPerfProfile();
+        overlay.setAutoTestStatus("AUTO TEST: " + (cycleProfileIndex + 1) + "/" + PERF_PROFILE_NAMES.length + " warm-up");
+        resetPerfWindow();
+        mainHandler.postDelayed(() -> {
+            if (!autoProfileCycleRunning || viewer == null || destroyed) return;
+            resetCycleMeasurement();
+            overlay.setAutoTestStatus("AUTO TEST: " + (cycleProfileIndex + 1) + "/" + PERF_PROFILE_NAMES.length + " measuring");
+            mainHandler.postDelayed(this::finishCurrentCycleProfile, PROFILE_MEASURE_MS);
+        }, PROFILE_WARMUP_MS);
+    }
+
+    private void finishCurrentCycleProfile() {
+        if (!autoProfileCycleRunning) return;
+        cycleMeasuring = false;
+        double seconds = Math.max(0.001, (System.nanoTime() - cycleStartNs) / 1_000_000_000.0);
+        double callbacks = cycleCallbacks / seconds;
+        double accepted = cycleAccepted / seconds;
+        double updateMs = cycleCallbacks == 0 ? 0 : cycleUpdateCpuNs / 1_000_000.0 / cycleCallbacks;
+        double renderMs = cycleCallbacks == 0 ? 0 : cycleRenderCpuNs / 1_000_000.0 / cycleCallbacks;
+        double callbackMs = cycleCallbacks < 2 ? 0
+                : cycleCallbackIntervalNs / 1_000_000.0 / (cycleCallbacks - 1);
+        updateDeviceConditions();
+        String row = String.format(java.util.Locale.US,
+                "%d,%s,%.2f,%.2f,%.3f,%.3f,%d,%.3f,%d,%s,%s,%.1f",
+                cycleProfileIndex, PERF_PROFILE_NAMES[cycleProfileIndex], callbacks, accepted,
+                updateMs, renderMs, cycleRejected, callbackMs, cycleCallbackGaps,
+                thermalStatusName, powerSaveMode ? "true" : "false", displayRefreshHz);
+        cycleCsvRows.add(row);
+        Log.i("NRStage2CSV", row);
+        cycleProfileIndex++;
+        if (cycleProfileIndex < PERF_PROFILE_NAMES.length) {
+            mainHandler.postDelayed(this::startCurrentCycleProfile, 250L);
+        } else {
+            autoProfileCycleRunning = false;
+            perfProfile = 0;
+            applyPerfProfile();
+            saveProfileCycleCsv();
+            overlay.setAutoTestStatus("AUTO TEST COMPLETE • CSV SAVED TO DOWNLOADS");
+        }
+    }
+
+    private void saveProfileCycleCsv() {
+        StringBuilder csv = new StringBuilder();
+        csv.append("profile_index,profile,callbacks_per_s,accepted_render_per_s,avg_update_cpu_ms,avg_render_call_cpu_ms,false_returns,avg_callback_interval_ms,callback_gaps,thermal,power_save,display_hz\n");
+        for (String row : cycleCsvRows) csv.append(row).append('\n');
+        String name = "NeonRush_Stage2_ProfileCycle_" + System.currentTimeMillis() + ".csv";
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentValues values = new ContentValues();
+                values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name);
+                values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/csv");
+                values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                        android.os.Environment.DIRECTORY_DOWNLOADS + "/");
+                values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1);
+                android.net.Uri uri = getContentResolver().insert(
+                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                if (uri == null) throw new IllegalStateException("Downloads provider returned no URI");
+                try (OutputStream out = getContentResolver().openOutputStream(uri)) {
+                    if (out == null) throw new IllegalStateException("Could not open CSV output");
+                    out.write(csv.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    out.flush();
+                }
+                ContentValues ready = new ContentValues();
+                ready.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0);
+                getContentResolver().update(uri, ready, null, null);
+                Toast.makeText(this, "Profile CSV saved in Downloads", Toast.LENGTH_LONG).show();
+            } else {
+                java.io.File dir = getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS);
+                if (dir == null) dir = getFilesDir();
+                java.io.File outFile = new java.io.File(dir, name);
+                try (OutputStream out = new java.io.FileOutputStream(outFile)) {
+                    out.write(csv.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                Toast.makeText(this, "Profile CSV saved: " + outFile.getAbsolutePath(), Toast.LENGTH_LONG).show();
+            }
+        } catch (Throwable e) {
+            Log.e(TAG, "Could not save profile CSV", e);
+            Toast.makeText(this, "CSV save failed; rows are in NRStage2CSV log", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void cancelAutomatedProfileCycle() {
+        mainHandler.removeCallbacksAndMessages(null);
+        autoProfileCycleRunning = false;
+        cycleMeasuring = false;
+    }
+
     private void releaseObstacleResources() {
         ModelViewer current = viewer;
         if (current == null) return;
@@ -673,12 +859,17 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             destroyPilotPart(engine, current, pilotRightArmEntity);
             destroyPilotPart(engine, current, pilotLeftLegEntity);
             destroyPilotPart(engine, current, pilotRightLegEntity);
+            destroyPilotPart(engine, current, pilotVisorEntity);
+            destroyPilotPart(engine, current, pilotBaseStripEntity);
+            destroyOwnedEntity(engine, current, obstacleBaseStripEntity);
             if (pilotRootEntity != 0) {
                 engine.getTransformManager().destroy(pilotRootEntity);
                 EntityManager.get().destroy(pilotRootEntity);
             }
             if (pilotMaterialInstance != null) engine.destroyMaterialInstance(pilotMaterialInstance);
             if (obstacleMaterialInstance != null) engine.destroyMaterialInstance(obstacleMaterialInstance);
+            if (cyanTrimMaterialInstance != null) engine.destroyMaterialInstance(cyanTrimMaterialInstance);
+            if (amberTrimMaterialInstance != null) engine.destroyMaterialInstance(amberTrimMaterialInstance);
             if (blockoutMaterial != null) engine.destroyMaterial(blockoutMaterial);
             if (obstacleVertices != null) engine.destroyVertexBuffer(obstacleVertices);
             if (obstacleIndices != null) engine.destroyIndexBuffer(obstacleIndices);
@@ -703,6 +894,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             obstacleIndices = null;
             pilotMaterialInstance = null;
             obstacleMaterialInstance = null;
+            cyanTrimMaterialInstance = null;
+            amberTrimMaterialInstance = null;
+            pilotVisorEntity = pilotBaseStripEntity = obstacleBaseStripEntity = 0;
             blockoutMaterial = null;
         }
     }
@@ -728,13 +922,21 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         });
     }
     @Override protected void onPause() {
-        resumed = false; stopLoop(); super.onPause();
+        resumed = false;
+        stopLoop();
+        cancelAutomatedProfileCycle();
+        super.onPause();
     }
     @Override protected void onDestroy() {
-        resumed = false; stopLoop();
-        // Release only our obstacle resources while ModelViewer's Engine is still valid.
+        // Shutdown order: stop frame callbacks and timed test tasks first; then destroy
+        // only app-owned entities, buffers and material instances; drain queued GPU work.
+        resumed = false;
+        stopLoop();
+        cancelAutomatedProfileCycle();
         releaseObstacleResources();
-        // Never call viewer.destroy(): ModelViewer owns Engine teardown on SurfaceView detach.
+        // super.onDestroy() is followed by SurfaceView detach. ModelViewer's registered
+        // detach listener then destroys its own renderer/view/scene and finally Engine.
+        // Calling Engine.destroy() here would double-destroy ModelViewer's Engine.
         super.onDestroy();
     }
 
@@ -745,7 +947,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         private long touchDownMs;
         private float touchDownX, touchDownY;
         private boolean touchMoved;
-        private boolean diagnosticsVisible = true;
+        private boolean diagnosticsExpanded = false;
+        private boolean touchOnPanel;
+        private String autoTestStatus = "HOLD 0.8s: AUTO PROFILE CSV";
         private double callbacksPerSecond, acceptedPerSecond, updateCpuMs, renderCallCpuMs;
         private double avgCallbackMs, displayHz;
         private long rejectedFrames, callbackGaps;
@@ -756,6 +960,10 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         void setPerfProfile(String name, String line1, String line2, String line3) {
             perfProfileName = name;
             settingsLine1 = line1; settingsLine2 = line2; settingsLine3 = line3;
+            invalidate();
+        }
+        void setAutoTestStatus(String status) {
+            autoTestStatus = status;
             invalidate();
         }
         void setDiagnostics(double callbacks, double accepted, double updateMs, double renderCallMs,
@@ -773,10 +981,20 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             float x=pilotX*w, y=pilotY*h;
             p.setColor(Color.argb(180,0,229,255)); p.setTextSize(24);
             // Footer is a native TextView above the Filament SurfaceView.
-            if (diagnosticsVisible) {
-                p.setColor(Color.argb(224, 0, 0, 0));
-                c.drawRect(12, 78, 510, 306, p);
-                p.setTextSize(11.5f);
+            p.setColor(Color.argb(218, 0, 0, 0));
+            float panelRight = Math.min(w - 10f, diagnosticsExpanded ? 448f : 322f);
+            float panelBottom = diagnosticsExpanded ? 294f : 137f;
+            c.drawRoundRect(12, 76, panelRight, panelBottom, 10f, 10f, p);
+            p.setTextSize(11.5f);
+            if (!diagnosticsExpanded) {
+                p.setColor(Color.rgb(100, 255, 210));
+                c.drawText(String.format(java.util.Locale.US, "ACCEPTED %.1f/s  •  CALLBACKS %.1f/s",
+                        acceptedPerSecond, callbacksPerSecond), 22, 98, p);
+                p.setColor(Color.WHITE);
+                c.drawText(perfProfileName + "  •  TAP DETAILS", 22, 118, p);
+                p.setColor(Color.rgb(255, 220, 145));
+                c.drawText(autoTestStatus, 22, 132, p);
+            } else {
                 p.setColor(Color.rgb(100, 255, 210));
                 c.drawText(String.format(java.util.Locale.US, "CALLBACKS/s %.1f", callbacksPerSecond), 22, 98, p);
                 c.drawText(String.format(java.util.Locale.US, "ACCEPTED RENDER/s %.1f", acceptedPerSecond), 22, 116, p);
@@ -784,7 +1002,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 c.drawText(String.format(java.util.Locale.US, "AVG RENDER CALL CPU %.3f ms", renderCallCpuMs), 22, 152, p);
                 c.drawText("MODELVIEWER FALSE / 1s: " + rejectedFrames + "  •  NOT DISPLAY FPS", 22, 170, p);
                 p.setColor(Color.WHITE);
-                c.drawText("PROFILE " + perfProfileName + "  •  LONG-PRESS TO CHANGE", 22, 190, p);
+                c.drawText("PROFILE " + perfProfileName + "  •  TAP TO COLLAPSE", 22, 190, p);
                 p.setColor(Color.rgb(180, 225, 255));
                 c.drawText(settingsLine1, 22, 210, p);
                 c.drawText(settingsLine2, 22, 228, p);
@@ -793,38 +1011,47 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 c.drawText("THERMAL " + thermalName + " | POWER SAVE " + (powerSave ? "ON" : "OFF")
                         + " | DISPLAY " + String.format(java.util.Locale.US, "%.1fHz", displayHz), 22, 266, p);
                 c.drawText(String.format(java.util.Locale.US, "CALLBACK AVG %.2fms | GAPS >1.5x VSYNC %d",
-                        avgCallbackMs, callbackGaps), 22, 286, p);
+                        avgCallbackMs, callbackGaps), 22, 284, p);
+                p.setColor(Color.rgb(100, 255, 210));
+                c.drawText(autoTestStatus, 22, 300, p);
             }
         }
         @Override public boolean onTouchEvent(MotionEvent e) {
-            if(e.getAction()==MotionEvent.ACTION_DOWN){
+            if (e.getAction() == MotionEvent.ACTION_DOWN) {
                 touchDownMs = e.getEventTime();
                 touchDownX = e.getX();
                 touchDownY = e.getY();
                 touchMoved = false;
-                pilotX=Math.max(0f,Math.min(1f,e.getX()/Math.max(1f,getWidth())));
-                pilotY=Math.max(0f,Math.min(1f,e.getY()/Math.max(1f,getHeight())));
-                updatePilotFromScreen(pilotX, pilotY);
+                touchOnPanel = e.getX() <= Math.min(getWidth() - 10f, diagnosticsExpanded ? 448f : 322f)
+                        && e.getY() >= 70f && e.getY() <= (diagnosticsExpanded ? 310f : 145f);
+                if (!touchOnPanel) {
+                    pilotX = Math.max(0f, Math.min(1f, e.getX() / Math.max(1f, getWidth())));
+                    pilotY = Math.max(0f, Math.min(1f, e.getY() / Math.max(1f, getHeight())));
+                    updatePilotFromScreen(pilotX, pilotY);
+                }
                 return true;
             }
-            if(e.getAction()==MotionEvent.ACTION_MOVE){
+            if (e.getAction() == MotionEvent.ACTION_MOVE) {
                 if (Math.abs(e.getX() - touchDownX) > 24f || Math.abs(e.getY() - touchDownY) > 24f)
                     touchMoved = true;
-                pilotX=Math.max(0f,Math.min(1f,e.getX()/Math.max(1f,getWidth())));
-                pilotY=Math.max(0f,Math.min(1f,e.getY()/Math.max(1f,getHeight())));
-                updatePilotFromScreen(pilotX, pilotY);
-                invalidate();
-                return true;
-            }
-            if(e.getAction()==MotionEvent.ACTION_UP){
-                if (!touchMoved && e.getEventTime() - touchDownMs >= 650L) {
-                    perfProfile = (perfProfile + 1) % PERF_PROFILE_NAMES.length;
-                    applyPerfProfile();
-                    resetPerfWindow();
-                    diagnosticsVisible = true;
+                if (!touchOnPanel) {
+                    pilotX = Math.max(0f, Math.min(1f, e.getX() / Math.max(1f, getWidth())));
+                    pilotY = Math.max(0f, Math.min(1f, e.getY() / Math.max(1f, getHeight())));
+                    updatePilotFromScreen(pilotX, pilotY);
                     invalidate();
                 }
-                performClick(); return true;
+                return true;
+            }
+            if (e.getAction() == MotionEvent.ACTION_UP) {
+                long heldMs = e.getEventTime() - touchDownMs;
+                if (!touchMoved && heldMs >= 800L) {
+                    Stage2IntegrationActivity.this.startAutomatedProfileCycle();
+                } else if (!touchMoved && touchOnPanel) {
+                    diagnosticsExpanded = !diagnosticsExpanded;
+                    invalidate();
+                }
+                performClick();
+                return true;
             }
             return true;
         }
