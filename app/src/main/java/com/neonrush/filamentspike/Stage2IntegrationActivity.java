@@ -59,6 +59,11 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private boolean destroyed;
     private boolean initializing;
     private PilotOverlay overlay;
+    private int perfProfile = 0;
+    private static final String[] PERF_PROFILE_NAMES = {
+            "BASELINE", "BLOOM OFF", "MSAA OFF", "DYNAMIC 75%", "DYNAMIC 65%",
+            "CORRIDOR ONLY", "CORRIDOR + PILOT", "CORRIDOR + OBSTACLE"
+    };
 
     // One reusable Filament renderable: geometry is built once; only its transform moves.
     private int obstacleEntity;
@@ -166,6 +171,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             viewer.loadModelGlb(ByteBuffer.wrap(glb));
             create3DObstacle(engine);
             create3DPilot(engine);
+            applyPerfProfile();
             applyCamera();
         } catch (Throwable e) {
             Log.e(TAG, "Renderer initialization failed", e);
@@ -174,6 +180,49 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             initializing = false;
         }
         if (resumed) startLoop();
+    }
+
+    // Long-press the screen to cycle controlled A/B profiles. Each profile resets
+    // all other settings to baseline so only the named variable changes.
+    private void applyPerfProfile() {
+        if (viewer == null) return;
+        View view = viewer.getView();
+        View.BloomOptions bloom = new View.BloomOptions();
+        bloom.enabled = perfProfile != 1;
+        bloom.strength = 0.24f; bloom.resolution = 192; bloom.levels = 4;
+        bloom.threshold = true; bloom.quality = View.QualityLevel.LOW; bloom.lensFlare = false;
+        view.setBloomOptions(bloom);
+
+        View.MultiSampleAntiAliasingOptions msaa = new View.MultiSampleAntiAliasingOptions();
+        msaa.enabled = perfProfile != 2; msaa.sampleCount = 2; msaa.customResolve = false;
+        view.setMultiSampleAntiAliasingOptions(msaa);
+
+        View.DynamicResolutionOptions dynamic = new View.DynamicResolutionOptions();
+        dynamic.enabled = perfProfile == 3 || perfProfile == 4;
+        float scale = perfProfile == 3 ? 0.75f : 0.65f;
+        dynamic.minScale = scale; dynamic.maxScale = scale;
+        dynamic.homogeneousScaling = true; dynamic.quality = View.QualityLevel.LOW;
+        view.setDynamicResolutionOptions(dynamic);
+
+        boolean showPilot = perfProfile != 5 && perfProfile != 7;
+        boolean showObstacle = perfProfile != 5 && perfProfile != 6;
+        int[] pilotParts = {pilotBodyEntity, pilotHeadEntity, pilotPackEntity,
+                pilotLeftArmEntity, pilotRightArmEntity, pilotLeftLegEntity, pilotRightLegEntity};
+        for (int entity : pilotParts) {
+            if (entity == 0) continue;
+            if (showPilot) viewSceneAdd(entity); else viewSceneRemove(entity);
+        }
+        if (obstacleEntity != 0) {
+            if (showObstacle) viewSceneAdd(obstacleEntity); else viewSceneRemove(obstacleEntity);
+        }
+        if (overlay != null) overlay.setPerfProfile(PERF_PROFILE_NAMES[perfProfile]);
+    }
+
+    private void viewSceneAdd(int entity) {
+        if (viewer != null) viewer.getScene().addEntity(entity);
+    }
+    private void viewSceneRemove(int entity) {
+        if (viewer != null) viewer.getScene().remove(entity);
     }
 
     private void create3DObstacle(Engine engine) {
@@ -544,6 +593,8 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         private boolean diagnosticsVisible = true;
         private double callbacksPerSecond, acceptedPerSecond, updateCpuMs, renderCallCpuMs;
         private long rejectedFrames;
+        private String perfProfileName = "BASELINE";
+        void setPerfProfile(String name) { perfProfileName = name; invalidate(); }
         void setDiagnostics(double callbacks, double accepted, double updateMs, double renderCallMs, long rejected) {
             callbacksPerSecond = callbacks; acceptedPerSecond = accepted;
             updateCpuMs = updateMs; renderCallCpuMs = renderCallMs; rejectedFrames = rejected;
@@ -557,13 +608,15 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             // Footer is a native TextView above the Filament SurfaceView.
             if (diagnosticsVisible) {
                 p.setColor(Color.argb(220, 0, 0, 0));
-                c.drawRect(12, 78, 350, 184, p);
+                c.drawRect(12, 78, 350, 202, p);
                 p.setColor(Color.rgb(100, 255, 210)); p.setTextSize(13);
                 c.drawText(String.format(java.util.Locale.US, "CALLBACKS/s %.1f", callbacksPerSecond), 22, 100, p);
                 c.drawText(String.format(java.util.Locale.US, "ACCEPTED RENDER/s %.1f", acceptedPerSecond), 22, 120, p);
                 c.drawText(String.format(java.util.Locale.US, "AVG UPDATE CPU %.3f ms", updateCpuMs), 22, 140, p);
                 c.drawText(String.format(java.util.Locale.US, "AVG RENDER CALL CPU %.3f ms", renderCallCpuMs), 22, 158, p);
-                c.drawText("REJECTED " + rejectedFrames + "  •  NOT DISPLAY FPS", 22, 176, p);
+                c.drawText("MODELVIEWER FALSE " + rejectedFrames + "  •  NOT DISPLAY FPS", 22, 176, p);
+                p.setColor(Color.WHITE);
+                c.drawText("PROFILE " + perfProfileName + "  •  LONG-PRESS TO CHANGE", 22, 196, p);
             }
         }
         @Override public boolean onTouchEvent(MotionEvent e) {
@@ -583,7 +636,9 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             }
             if(e.getAction()==MotionEvent.ACTION_UP){
                 if (e.getEventTime() - touchDownMs >= 650L) {
-                    diagnosticsVisible = !diagnosticsVisible;
+                    perfProfile = (perfProfile + 1) % PERF_PROFILE_NAMES.length;
+                    applyPerfProfile();
+                    diagnosticsVisible = true;
                     invalidate();
                 }
                 performClick(); return true;
