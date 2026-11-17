@@ -92,6 +92,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private long cycleStartNs;
     private long cycleCallbacks, cycleAccepted, cycleRejected;
     private long cycleUpdateCpuNs, cycleRenderCpuNs, cycleCallbackIntervalNs, cycleCallbackGaps;
+    private long cycleGpuFrameDurationNs, cycleGpuFrameCount, cycleMaxGpuFrameDurationNs;
     private final ArrayList<String> cycleCsvRows = new ArrayList<>();
 
     // One reusable Filament renderable: geometry is built once; only its transform moves.
@@ -370,6 +371,11 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 statsGpuFrameDurationNs += gpuNs;
                 statsGpuFrameCount++;
                 if (gpuNs > statsMaxGpuFrameDurationNs) statsMaxGpuFrameDurationNs = gpuNs;
+                if (cycleMeasuring) {
+                    cycleGpuFrameDurationNs += gpuNs;
+                    cycleGpuFrameCount++;
+                    if (gpuNs > cycleMaxGpuFrameDurationNs) cycleMaxGpuFrameDurationNs = gpuNs;
+                }
             }
         }
     }
@@ -772,6 +778,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private void resetCycleMeasurement() {
         cycleCallbacks = cycleAccepted = cycleRejected = 0L;
         cycleUpdateCpuNs = cycleRenderCpuNs = cycleCallbackIntervalNs = cycleCallbackGaps = 0L;
+        cycleGpuFrameDurationNs = cycleGpuFrameCount = cycleMaxGpuFrameDurationNs = 0L;
         cycleStartNs = System.nanoTime();
         cycleMeasuring = true;
         resetPerfWindow();
@@ -812,10 +819,14 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         double callbackMs = cycleCallbacks < 2 ? 0
                 : cycleCallbackIntervalNs / 1_000_000.0 / (cycleCallbacks - 1);
         updateDeviceConditions();
+        double gpuAvgMs = cycleGpuFrameCount == 0 ? 0
+                : cycleGpuFrameDurationNs / 1_000_000.0 / cycleGpuFrameCount;
+        double gpuMaxMs = cycleMaxGpuFrameDurationNs / 1_000_000.0;
         String row = String.format(java.util.Locale.US,
-                "%d,%s,%.2f,%.2f,%.3f,%.3f,%d,%.3f,%d,%s,%s,%.1f",
+                "%d,%s,%.2f,%.2f,%.3f,%.3f,%d,%.3f,%d,%.3f,%.3f,%d,%s,%s,%.1f",
                 cycleProfileIndex, PERF_PROFILE_NAMES[cycleProfileIndex], callbacks, accepted,
                 updateMs, renderMs, cycleRejected, callbackMs, cycleCallbackGaps,
+                gpuAvgMs, gpuMaxMs, cycleGpuFrameCount,
                 thermalStatusName, powerSaveMode ? "true" : "false", displayRefreshHz);
         cycleCsvRows.add(row);
         Log.i("NRStage2CSV", row);
@@ -833,7 +844,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
 
     private void saveProfileCycleCsv() {
         StringBuilder csv = new StringBuilder();
-        csv.append("profile_index,profile,callbacks_per_s,accepted_render_per_s,avg_update_cpu_ms,avg_render_call_cpu_ms,false_returns,avg_callback_interval_ms,callback_gaps,thermal,power_save,display_hz\n");
+        csv.append("profile_index,profile,callbacks_per_s,accepted_render_per_s,avg_update_cpu_ms,avg_render_call_cpu_ms,false_returns,avg_callback_interval_ms,callback_gaps,gpu_frame_avg_ms,gpu_frame_max_ms,gpu_samples,thermal,power_save,display_hz\n");
         for (String row : cycleCsvRows) csv.append(row).append('\n');
         String name = "NeonRush_Stage2_ProfileCycle_" + System.currentTimeMillis() + ".csv";
         try {
