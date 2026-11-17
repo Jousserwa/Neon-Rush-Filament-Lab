@@ -5,6 +5,8 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.os.Bundle;
+import android.os.Build;
+import android.os.PowerManager;
 import android.util.Base64;
 import android.util.Log;
 import android.view.Choreographer;
@@ -61,7 +63,8 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private PilotOverlay overlay;
     private int perfProfile = 0;
     private static final String[] PERF_PROFILE_NAMES = {
-            "BASELINE", "BLOOM OFF", "MSAA OFF", "DYNAMIC 75%", "DYNAMIC 65%",
+            "FULL BASELINE", "BLOOM OFF", "MSAA OFF", "FXAA OFF",
+            "DYNAMIC 75-100%", "FIXED 75%", "FIXED 65%",
             "CORRIDOR ONLY", "CORRIDOR + PILOT", "CORRIDOR + OBSTACLE"
     };
 
@@ -84,6 +87,13 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     private long statsObstacleUpdateCpuNs;
     private long statsRenderCallCpuNs;
     private long statsMaxRenderCallCpuNs;
+    private long lastCallbackFrameTimeNs;
+    private long statsCallbackIntervalNs;
+    private long statsMaxCallbackIntervalNs;
+    private long statsCallbackGaps;
+    private double displayRefreshHz = 60.0;
+    private String thermalStatusName = "UNKNOWN";
+    private boolean powerSaveMode;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -182,30 +192,52 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         if (resumed) startLoop();
     }
 
-    // Long-press the screen to cycle controlled A/B profiles. Each profile resets
-    // all other settings to baseline so only the named variable changes.
+    // Each profile is an isolated comparison against FULL BASELINE.
+    // FULL BASELINE = bloom + 2x MSAA + FXAA, fixed native resolution,
+    // SSAO/shadows off, and both synthetic renderables visible.
     private void applyPerfProfile() {
         if (viewer == null) return;
         View view = viewer.getView();
+
+        boolean bloomEnabled = perfProfile != 1;
+        boolean msaaEnabled = perfProfile != 2;
+        boolean fxaaEnabled = perfProfile != 3;
+        boolean dynamicEnabled = perfProfile == 4 || perfProfile == 5 || perfProfile == 6;
+        float minScale = perfProfile == 4 ? 0.75f : (perfProfile == 6 ? 0.65f : 0.75f);
+        float maxScale = perfProfile == 4 ? 1.00f : (perfProfile == 5 ? 0.75f : (perfProfile == 6 ? 0.65f : 1.00f));
+
         View.BloomOptions bloom = new View.BloomOptions();
-        bloom.enabled = perfProfile != 1;
-        bloom.strength = 0.24f; bloom.resolution = 192; bloom.levels = 4;
-        bloom.threshold = true; bloom.quality = View.QualityLevel.LOW; bloom.lensFlare = false;
+        bloom.enabled = bloomEnabled;
+        bloom.strength = 0.24f;
+        bloom.resolution = 192;
+        bloom.levels = 4;
+        bloom.threshold = true;
+        bloom.quality = View.QualityLevel.LOW;
+        bloom.lensFlare = false;
         view.setBloomOptions(bloom);
 
         View.MultiSampleAntiAliasingOptions msaa = new View.MultiSampleAntiAliasingOptions();
-        msaa.enabled = perfProfile != 2; msaa.sampleCount = 2; msaa.customResolve = false;
+        msaa.enabled = msaaEnabled;
+        msaa.sampleCount = 2;
+        msaa.customResolve = false;
         view.setMultiSampleAntiAliasingOptions(msaa);
+        view.setAntiAliasing(fxaaEnabled ? View.AntiAliasing.FXAA : View.AntiAliasing.NONE);
 
         View.DynamicResolutionOptions dynamic = new View.DynamicResolutionOptions();
-        dynamic.enabled = perfProfile == 3 || perfProfile == 4;
-        float scale = perfProfile == 3 ? 0.75f : 0.65f;
-        dynamic.minScale = scale; dynamic.maxScale = scale;
-        dynamic.homogeneousScaling = true; dynamic.quality = View.QualityLevel.LOW;
+        dynamic.enabled = dynamicEnabled;
+        dynamic.minScale = minScale;
+        dynamic.maxScale = maxScale;
+        dynamic.homogeneousScaling = true;
+        dynamic.quality = View.QualityLevel.LOW;
         view.setDynamicResolutionOptions(dynamic);
 
-        boolean showPilot = perfProfile != 5 && perfProfile != 7;
-        boolean showObstacle = perfProfile != 5 && perfProfile != 6;
+        View.AmbientOcclusionOptions ao = new View.AmbientOcclusionOptions();
+        ao.enabled = false;
+        view.setAmbientOcclusionOptions(ao);
+        view.setShadowingEnabled(false);
+
+        boolean showPilot = perfProfile != 7 && perfProfile != 9;
+        boolean showObstacle = perfProfile != 7 && perfProfile != 8;
         int[] pilotParts = {pilotBodyEntity, pilotHeadEntity, pilotPackEntity,
                 pilotLeftArmEntity, pilotRightArmEntity, pilotLeftLegEntity, pilotRightLegEntity};
         for (int entity : pilotParts) {
@@ -215,7 +247,69 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         if (obstacleEntity != 0) {
             if (showObstacle) viewSceneAdd(obstacleEntity); else viewSceneRemove(obstacleEntity);
         }
-        if (overlay != null) overlay.setPerfProfile(PERF_PROFILE_NAMES[perfProfile]);
+        if (overlay != null) {
+            overlay.setPerfProfile(PERF_PROFILE_NAMES[perfProfile], activeSettingsLine1(),
+                    activeSettingsLine2(), activeSettingsLine3());
+        }
+    }
+
+    private String activeSettingsLine1() {
+        return "BLOOM " + (perfProfile == 1 ? "OFF" : "ON")
+                + " | MSAA " + (perfProfile == 2 ? "OFF" : "2X")
+                + " | FXAA " + (perfProfile == 3 ? "OFF" : "ON");
+    }
+
+    private String activeSettingsLine2() {
+        if (perfProfile == 4) return "DYNAMIC 75-100% | SSAO OFF | SHADOWS OFF";
+        if (perfProfile == 5) return "FIXED 75% | SSAO OFF | SHADOWS OFF";
+        if (perfProfile == 6) return "FIXED 65% | SSAO OFF | SHADOWS OFF";
+        return "DYNAMIC OFF 100% | SSAO OFF | SHADOWS OFF";
+    }
+
+    private String activeSettingsLine3() {
+        boolean showPilot = perfProfile != 7 && perfProfile != 9;
+        boolean showObstacle = perfProfile != 7 && perfProfile != 8;
+        return "PILOT " + (showPilot ? "ON" : "OFF")
+                + " | OBSTACLE " + (showObstacle ? "ON" : "OFF");
+    }
+
+    private void updateDeviceConditions() {
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        if (pm != null) {
+            powerSaveMode = pm.isPowerSaveMode();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                thermalStatusName = thermalStatusToName(pm.getCurrentThermalStatus());
+            } else {
+                thermalStatusName = "API<29";
+            }
+        } else {
+            thermalStatusName = "UNAVAILABLE";
+            powerSaveMode = false;
+        }
+        if (surface != null && surface.getDisplay() != null) {
+            displayRefreshHz = surface.getDisplay().getRefreshRate();
+        }
+    }
+
+    private static String thermalStatusToName(int status) {
+        switch (status) {
+            case PowerManager.THERMAL_STATUS_NONE: return "NONE";
+            case PowerManager.THERMAL_STATUS_LIGHT: return "LIGHT";
+            case PowerManager.THERMAL_STATUS_MODERATE: return "MODERATE";
+            case PowerManager.THERMAL_STATUS_SEVERE: return "SEVERE";
+            case PowerManager.THERMAL_STATUS_CRITICAL: return "CRITICAL";
+            case PowerManager.THERMAL_STATUS_EMERGENCY: return "EMERGENCY";
+            case PowerManager.THERMAL_STATUS_SHUTDOWN: return "SHUTDOWN";
+            default: return "UNKNOWN(" + status + ")";
+        }
+    }
+
+    private void resetPerfWindow() {
+        statsWindowStartNs = System.nanoTime();
+        statsCallbacks = statsAccepted = statsRejected = 0;
+        statsObstacleUpdateCpuNs = statsRenderCallCpuNs = statsMaxRenderCallCpuNs = 0;
+        statsCallbackIntervalNs = statsMaxCallbackIntervalNs = statsCallbackGaps = 0;
+        lastCallbackFrameTimeNs = 0L;
     }
 
     private void viewSceneAdd(int entity) {
@@ -467,8 +561,8 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         if (!resumed || running || viewer == null || destroyed) return;
         running = true;
         previousFrameTimeNs = 0L;
-        statsWindowStartNs = System.nanoTime();
-        statsCallbacks = statsAccepted = statsRejected = statsObstacleUpdateCpuNs = statsRenderCallCpuNs = statsMaxRenderCallCpuNs = 0;
+        updateDeviceConditions();
+        resetPerfWindow();
         Choreographer.getInstance().postFrameCallback(this);
     }
     private void stopLoop() {
@@ -481,6 +575,14 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         long updateStartNs = System.nanoTime();
         try {
             statsCallbacks++;
+            if (lastCallbackFrameTimeNs != 0L) {
+                long callbackInterval = frameTimeNanos - lastCallbackFrameTimeNs;
+                statsCallbackIntervalNs += callbackInterval;
+                if (callbackInterval > statsMaxCallbackIntervalNs) statsMaxCallbackIntervalNs = callbackInterval;
+                double expectedPeriodNs = displayRefreshHz > 0.0 ? 1_000_000_000.0 / displayRefreshHz : 16_666_667.0;
+                if (callbackInterval > expectedPeriodNs * 1.5) statsCallbackGaps++;
+            }
+            lastCallbackFrameTimeNs = frameTimeNanos;
             update3DObstacle(frameTimeNanos);
             statsObstacleUpdateCpuNs += System.nanoTime() - updateStartNs;
             long renderStartNs = System.nanoTime();
@@ -495,14 +597,21 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 double seconds = (now - statsWindowStartNs) / 1_000_000_000.0;
                 double avgUpdateMs = statsCallbacks == 0 ? 0 : statsObstacleUpdateCpuNs / 1_000_000.0 / statsCallbacks;
                 double avgRenderCallMs = statsCallbacks == 0 ? 0 : statsRenderCallCpuNs / 1_000_000.0 / statsCallbacks;
+                double avgCallbackMs = statsCallbacks < 2 ? 0
+                        : statsCallbackIntervalNs / 1_000_000.0 / (statsCallbacks - 1);
+                updateDeviceConditions();
+                String profileSettings = activeSettingsLine1() + " | " + activeSettingsLine2()
+                        + " | " + activeSettingsLine3();
                 Log.i(TAG, String.format(java.util.Locale.US,
-                        "PERF callbacks/s=%.1f acceptedRender/s=%.1f rejected=%d avgUpdateCPUms=%.3f avgRenderCallCPUms=%.3f maxRenderCallCPUms=%.3f",
-                        statsCallbacks / seconds, statsAccepted / seconds, statsRejected, avgUpdateMs, avgRenderCallMs,
-                        statsMaxRenderCallCpuNs / 1_000_000.0));
+                        "PERF profile=%s settings=[%s] thermal=%s powerSave=%s displayHz=%.1f callbacks/s=%.1f acceptedRender/s=%.1f false=%d callbackAvgMs=%.2f callbackMaxMs=%.2f callbackGaps=%d avgUpdateCPUms=%.3f avgRenderCallCPUms=%.3f maxRenderCallCPUms=%.3f",
+                        PERF_PROFILE_NAMES[perfProfile], profileSettings, thermalStatusName, powerSaveMode,
+                        displayRefreshHz, statsCallbacks / seconds, statsAccepted / seconds, statsRejected,
+                        avgCallbackMs, statsMaxCallbackIntervalNs / 1_000_000.0, statsCallbackGaps,
+                        avgUpdateMs, avgRenderCallMs, statsMaxRenderCallCpuNs / 1_000_000.0));
                 if (overlay != null) overlay.setDiagnostics(statsCallbacks / seconds, statsAccepted / seconds,
-                        avgUpdateMs, avgRenderCallMs, statsRejected);
-                statsWindowStartNs = now;
-                statsCallbacks = statsAccepted = statsRejected = statsObstacleUpdateCpuNs = statsRenderCallCpuNs = statsMaxRenderCallCpuNs = 0;
+                        avgUpdateMs, avgRenderCallMs, statsRejected, avgCallbackMs,
+                        statsCallbackGaps, thermalStatusName, powerSaveMode, displayRefreshHz);
+                resetPerfWindow();
             }
             if (overlay != null) overlay.invalidate();
             if (running && resumed && viewer == current && !destroyed)
@@ -590,14 +699,28 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         private float pilotX = 0.5f;
         private float pilotY = 0.70f;
         private long touchDownMs;
+        private float touchDownX, touchDownY;
+        private boolean touchMoved;
         private boolean diagnosticsVisible = true;
         private double callbacksPerSecond, acceptedPerSecond, updateCpuMs, renderCallCpuMs;
-        private long rejectedFrames;
-        private String perfProfileName = "BASELINE";
-        void setPerfProfile(String name) { perfProfileName = name; invalidate(); }
-        void setDiagnostics(double callbacks, double accepted, double updateMs, double renderCallMs, long rejected) {
+        private double avgCallbackMs, displayHz;
+        private long rejectedFrames, callbackGaps;
+        private String thermalName = "UNKNOWN";
+        private boolean powerSave;
+        private String perfProfileName = "FULL BASELINE";
+        private String settingsLine1 = "", settingsLine2 = "", settingsLine3 = "";
+        void setPerfProfile(String name, String line1, String line2, String line3) {
+            perfProfileName = name;
+            settingsLine1 = line1; settingsLine2 = line2; settingsLine3 = line3;
+            invalidate();
+        }
+        void setDiagnostics(double callbacks, double accepted, double updateMs, double renderCallMs,
+                            long rejected, double callbackMs, long gaps, String thermal,
+                            boolean saveMode, double refreshHz) {
             callbacksPerSecond = callbacks; acceptedPerSecond = accepted;
             updateCpuMs = updateMs; renderCallCpuMs = renderCallMs; rejectedFrames = rejected;
+            avgCallbackMs = callbackMs; callbackGaps = gaps; thermalName = thermal;
+            powerSave = saveMode; displayHz = refreshHz;
         }
         PilotOverlay() { super(Stage2IntegrationActivity.this); setBackgroundColor(Color.TRANSPARENT); setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null); }
         @Override protected void onDraw(Canvas c) {
@@ -607,27 +730,42 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
             p.setColor(Color.argb(180,0,229,255)); p.setTextSize(24);
             // Footer is a native TextView above the Filament SurfaceView.
             if (diagnosticsVisible) {
-                p.setColor(Color.argb(220, 0, 0, 0));
-                c.drawRect(12, 78, 350, 202, p);
-                p.setColor(Color.rgb(100, 255, 210)); p.setTextSize(13);
-                c.drawText(String.format(java.util.Locale.US, "CALLBACKS/s %.1f", callbacksPerSecond), 22, 100, p);
-                c.drawText(String.format(java.util.Locale.US, "ACCEPTED RENDER/s %.1f", acceptedPerSecond), 22, 120, p);
-                c.drawText(String.format(java.util.Locale.US, "AVG UPDATE CPU %.3f ms", updateCpuMs), 22, 140, p);
-                c.drawText(String.format(java.util.Locale.US, "AVG RENDER CALL CPU %.3f ms", renderCallCpuMs), 22, 158, p);
-                c.drawText("MODELVIEWER FALSE " + rejectedFrames + "  •  NOT DISPLAY FPS", 22, 176, p);
+                p.setColor(Color.argb(224, 0, 0, 0));
+                c.drawRect(12, 78, 510, 306, p);
+                p.setTextSize(11.5f);
+                p.setColor(Color.rgb(100, 255, 210));
+                c.drawText(String.format(java.util.Locale.US, "CALLBACKS/s %.1f", callbacksPerSecond), 22, 98, p);
+                c.drawText(String.format(java.util.Locale.US, "ACCEPTED RENDER/s %.1f", acceptedPerSecond), 22, 116, p);
+                c.drawText(String.format(java.util.Locale.US, "AVG UPDATE CPU %.3f ms", updateCpuMs), 22, 134, p);
+                c.drawText(String.format(java.util.Locale.US, "AVG RENDER CALL CPU %.3f ms", renderCallCpuMs), 22, 152, p);
+                c.drawText("MODELVIEWER FALSE / 1s: " + rejectedFrames + "  •  NOT DISPLAY FPS", 22, 170, p);
                 p.setColor(Color.WHITE);
-                c.drawText("PROFILE " + perfProfileName + "  •  LONG-PRESS TO CHANGE", 22, 196, p);
+                c.drawText("PROFILE " + perfProfileName + "  •  LONG-PRESS TO CHANGE", 22, 190, p);
+                p.setColor(Color.rgb(180, 225, 255));
+                c.drawText(settingsLine1, 22, 210, p);
+                c.drawText(settingsLine2, 22, 228, p);
+                c.drawText(settingsLine3, 22, 246, p);
+                p.setColor(Color.rgb(255, 220, 145));
+                c.drawText("THERMAL " + thermalName + " | POWER SAVE " + (powerSave ? "ON" : "OFF")
+                        + " | DISPLAY " + String.format(java.util.Locale.US, "%.1fHz", displayHz), 22, 266, p);
+                c.drawText(String.format(java.util.Locale.US, "CALLBACK AVG %.2fms | GAPS >1.5x VSYNC %d",
+                        avgCallbackMs, callbackGaps), 22, 286, p);
             }
         }
         @Override public boolean onTouchEvent(MotionEvent e) {
             if(e.getAction()==MotionEvent.ACTION_DOWN){
                 touchDownMs = e.getEventTime();
+                touchDownX = e.getX();
+                touchDownY = e.getY();
+                touchMoved = false;
                 pilotX=Math.max(0f,Math.min(1f,e.getX()/Math.max(1f,getWidth())));
                 pilotY=Math.max(0f,Math.min(1f,e.getY()/Math.max(1f,getHeight())));
                 updatePilotFromScreen(pilotX, pilotY);
                 return true;
             }
             if(e.getAction()==MotionEvent.ACTION_MOVE){
+                if (Math.abs(e.getX() - touchDownX) > 24f || Math.abs(e.getY() - touchDownY) > 24f)
+                    touchMoved = true;
                 pilotX=Math.max(0f,Math.min(1f,e.getX()/Math.max(1f,getWidth())));
                 pilotY=Math.max(0f,Math.min(1f,e.getY()/Math.max(1f,getHeight())));
                 updatePilotFromScreen(pilotX, pilotY);
@@ -635,9 +773,10 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 return true;
             }
             if(e.getAction()==MotionEvent.ACTION_UP){
-                if (e.getEventTime() - touchDownMs >= 650L) {
+                if (!touchMoved && e.getEventTime() - touchDownMs >= 650L) {
                     perfProfile = (perfProfile + 1) % PERF_PROFILE_NAMES.length;
                     applyPerfProfile();
+                    resetPerfWindow();
                     diagnosticsVisible = true;
                     invalidate();
                 }
