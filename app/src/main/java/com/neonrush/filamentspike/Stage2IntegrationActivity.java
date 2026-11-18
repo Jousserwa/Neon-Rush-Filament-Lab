@@ -642,6 +642,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         if (!obstacleCollisionReported && overlapsPilotObstacleAabb(previousObstacleZ, obstacleZ)) {
             Log.i(TAG, "TEST_COLLISION_AABB: pilot and obstacle world-space bounds overlap");
             obstacleCollisionReported = true;
+            if (overlay != null) overlay.triggerHitReaction(frameTimeNanos + 450_000_000L);
         }
         if (!obstacleCollisionReported && obstacleZ > PILOT_Z + 0.42f) {
             Log.i(TAG, "TEST_PASS_AABB: obstacle cleared pilot bounds");
@@ -846,7 +847,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
 
     private void saveProfileCycleCsv() {
         StringBuilder csv = new StringBuilder();
-        csv.append("profile_index,profile,callbacks_per_s,accepted_render_per_s,avg_update_cpu_ms,avg_render_call_cpu_ms,false_returns,avg_callback_interval_ms,callback_gaps,gpu_frame_avg_ms,gpu_frame_max_ms,gpu_samples,thermal,power_save,display_hz,settings_bloom_aa,settings_dynamic,settings_objects\\n");
+        csv.append("profile_index,profile,callbacks_per_s,accepted_render_per_s,avg_update_cpu_ms,avg_render_call_cpu_ms,false_returns,avg_callback_interval_ms,callback_gaps,gpu_frame_avg_ms,gpu_frame_max_ms,gpu_samples,thermal,power_save,display_hz,settings_bloom_aa,settings_dynamic,settings_objects\n");
         for (String row : cycleCsvRows) csv.append(row).append('\n');
         String name = "NeonRush_Stage2_ProfileCycle_" + System.currentTimeMillis() + ".csv";
         try {
@@ -1002,11 +1003,13 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         private boolean powerSave;
         private String perfProfileName = "FULL BASELINE";
         private String settingsLine1 = "", settingsLine2 = "", settingsLine3 = "";
+        private long hitFlashUntilNs;
         void setPerfProfile(String name, String line1, String line2, String line3) {
             perfProfileName = name;
             settingsLine1 = line1; settingsLine2 = line2; settingsLine3 = line3;
             invalidate();
         }
+        void triggerHitReaction(long untilNs) { hitFlashUntilNs = untilNs; invalidate(); }
         void setAutoTestStatus(String status) {
             autoTestStatus = status;
             invalidate();
@@ -1024,6 +1027,14 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         @Override protected void onDraw(Canvas c) {
             super.onDraw(c);
             float w = getWidth(), h = getHeight();
+            long hitRemaining = hitFlashUntilNs - System.nanoTime();
+            if (hitRemaining > 0L) {
+                int alpha = (int) Math.min(105L, 105L * hitRemaining / 450_000_000L);
+                c.drawColor(Color.argb(alpha, 190, 8, 28));
+                p.setColor(Color.WHITE); p.setTextSize(25f); p.setTextAlign(Paint.Align.CENTER);
+                c.drawText("IMPACT!", w * 0.5f, h * 0.43f, p);
+                p.setTextAlign(Paint.Align.LEFT);
+            }
             float x=pilotX*w, y=pilotY*h;
             p.setColor(Color.argb(180,0,229,255)); p.setTextSize(24);
             // Footer is a native TextView above the Filament SurfaceView.
