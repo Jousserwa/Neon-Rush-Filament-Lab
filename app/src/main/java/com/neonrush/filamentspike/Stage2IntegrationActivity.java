@@ -250,7 +250,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         bloom.enabled = bloomEnabled;
         bloom.strength = 0.24f;
         bloom.resolution = bloomLow ? 96 : 192;
-        bloom.levels = bloomLow ? 2 : 4;
+        bloom.levels = bloomLow ? 3 : 4;
         bloom.threshold = true;
         bloom.quality = View.QualityLevel.LOW;
         bloom.lensFlare = false;
@@ -299,7 +299,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
 
     private String activeSettingsLine1() {
         boolean bloomOn = !(perfProfile == 4 || perfProfile == 8 || perfProfile >= 11);
-        String bloom = bloomOn ? ((perfProfile == 5 || perfProfile == 9) ? "LOW 96PX/2" : "ON") : "OFF";
+        String bloom = bloomOn ? ((perfProfile == 5 || perfProfile == 9) ? "LOW 96PX/3" : "ON") : "OFF";
         boolean msaa = perfProfile == 0 || perfProfile == 2;
         boolean fxaa = perfProfile == 0 || perfProfile == 1 || perfProfile >= 8;
         return "BLOOM " + bloom + " | MSAA " + (msaa ? "2X" : "OFF")
