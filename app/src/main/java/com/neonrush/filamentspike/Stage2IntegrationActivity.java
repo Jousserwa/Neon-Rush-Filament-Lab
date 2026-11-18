@@ -50,7 +50,7 @@ import java.util.ArrayList;
 public final class Stage2IntegrationActivity extends Activity implements Choreographer.FrameCallback {
     private static final String TAG = "NRStage2Public";
     private static final float OBSTACLE_START_Z = -10.0f;
-    private static final float OBSTACLE_RECYCLE_Z = -2.0f;
+    private static final float OBSTACLE_RECYCLE_Z = -3.0f;
     private static final float OBSTACLE_SPEED_UNITS_PER_SECOND = 2.0f;
     private static final float PILOT_Z = -4.0f;
     private static final float PILOT_HALF_WIDTH = 0.40f;
@@ -74,14 +74,10 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     // The timed sweep separates the two AA paths instead of treating "MSAA off"
     // and "FXAA only" as different configurations (they are the same setting).
     private static final String[] PERF_PROFILE_NAMES = {
-            "FULL BASELINE",
-            "MSAA OFF / FXAA ONLY",
-            "MSAA ONLY / FXAA OFF",
-            "NO AA",
-            "BLOOM OFF",
-            "BLOOM LOW RES",
-            "DYNAMIC 75-85%",
-            "CORRIDOR ONLY"
+            "FULL BASELINE", "MSAA OFF / FXAA ONLY", "MSAA ONLY / FXAA OFF", "NO AA",
+            "BLOOM OFF", "BLOOM LOW RES", "DYNAMIC 75-85%", "CORRIDOR ONLY",
+            "A BLOOM OFF + MSAA OFF + FXAA", "B BLOOM LOW + MSAA OFF + DYNAMIC 80-90",
+            "C BLOOM OFF + DYNAMIC 85-100", "A + PILOT OFF", "A + OBSTACLE OFF", "A + BOTH OFF"
     };
     private static final long PROFILE_WARMUP_MS = 2000L;
     private static final long PROFILE_MEASURE_MS = 5000L;
@@ -234,25 +230,27 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         if (resumed) startLoop();
     }
 
-    // Each profile is an isolated comparison against FULL BASELINE.
-    // FULL BASELINE = bloom + 2x MSAA + FXAA, fixed native resolution,
-    // SSAO/shadows off, and both synthetic renderables visible.
+    // Profiles 0-7 reproduce the original isolated sweep. Profiles 8-13 test
+    // combined settings and isolate pilot / obstacle GPU cost using the same A settings.
+    private boolean pilotVisibleForProfile() { return perfProfile != 7 && perfProfile != 11 && perfProfile != 13; }
+    private boolean obstacleVisibleForProfile() { return perfProfile != 7 && perfProfile != 12 && perfProfile != 13; }
+
     private void applyPerfProfile() {
         if (viewer == null) return;
         View view = viewer.getView();
-
-        boolean bloomEnabled = perfProfile != 4;
+        boolean bloomEnabled = !(perfProfile == 4 || perfProfile == 8 || perfProfile >= 11);
+        boolean bloomLow = perfProfile == 5 || perfProfile == 9;
         boolean msaaEnabled = perfProfile == 0 || perfProfile == 2;
-        boolean fxaaEnabled = perfProfile == 0 || perfProfile == 1;
-        boolean dynamicEnabled = perfProfile == 6;
-        float minScale = 0.75f;
-        float maxScale = 0.85f;
+        boolean fxaaEnabled = perfProfile == 0 || perfProfile == 1 || perfProfile >= 8;
+        boolean dynamicEnabled = perfProfile == 6 || perfProfile == 9 || perfProfile == 10;
+        float minScale = perfProfile == 9 ? 0.80f : (perfProfile == 10 ? 0.85f : 0.75f);
+        float maxScale = perfProfile == 9 ? 0.90f : (perfProfile == 10 ? 1.00f : 0.85f);
 
         View.BloomOptions bloom = new View.BloomOptions();
         bloom.enabled = bloomEnabled;
         bloom.strength = 0.24f;
-        bloom.resolution = perfProfile == 5 ? 96 : 192;
-        bloom.levels = perfProfile == 5 ? 2 : 4;
+        bloom.resolution = bloomLow ? 96 : 192;
+        bloom.levels = bloomLow ? 2 : 4;
         bloom.threshold = true;
         bloom.quality = View.QualityLevel.LOW;
         bloom.lensFlare = false;
@@ -278,8 +276,8 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
         view.setAmbientOcclusionOptions(ao);
         view.setShadowingEnabled(false);
 
-        boolean showPilot = perfProfile != 7;
-        boolean showObstacle = perfProfile != 7;
+        boolean showPilot = pilotVisibleForProfile();
+        boolean showObstacle = obstacleVisibleForProfile();
         int[] pilotParts = {pilotBodyEntity, pilotHeadEntity, pilotPackEntity,
                 pilotLeftArmEntity, pilotRightArmEntity, pilotLeftLegEntity, pilotRightLegEntity,
                 pilotVisorEntity, pilotBaseStripEntity};
@@ -300,22 +298,24 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
     }
 
     private String activeSettingsLine1() {
-        String bloom = perfProfile == 4 ? "OFF" : (perfProfile == 5 ? "LOW 96PX" : "ON");
-        String msaa = (perfProfile == 0 || perfProfile == 2) ? "2X" : "OFF";
-        String fxaa = (perfProfile == 0 || perfProfile == 1) ? "ON" : "OFF";
-        return "BLOOM " + bloom + " | MSAA " + msaa + " | FXAA " + fxaa;
+        boolean bloomOn = !(perfProfile == 4 || perfProfile == 8 || perfProfile >= 11);
+        String bloom = bloomOn ? ((perfProfile == 5 || perfProfile == 9) ? "LOW 96PX/2" : "ON") : "OFF";
+        boolean msaa = perfProfile == 0 || perfProfile == 2;
+        boolean fxaa = perfProfile == 0 || perfProfile == 1 || perfProfile >= 8;
+        return "BLOOM " + bloom + " | MSAA " + (msaa ? "2X" : "OFF")
+                + " | FXAA " + (fxaa ? "ON" : "OFF");
     }
 
     private String activeSettingsLine2() {
         if (perfProfile == 6) return "DYNAMIC 75-85% | SSAO OFF | SHADOWS OFF";
+        if (perfProfile == 9) return "DYNAMIC 80-90% | SSAO OFF | SHADOWS OFF";
+        if (perfProfile == 10) return "DYNAMIC 85-100% | SSAO OFF | SHADOWS OFF";
         return "DYNAMIC OFF 100% | SSAO OFF | SHADOWS OFF";
     }
 
     private String activeSettingsLine3() {
-        boolean showPilot = perfProfile != 7;
-        boolean showObstacle = perfProfile != 7;
-        return "PILOT " + (showPilot ? "ON" : "OFF")
-                + " | OBSTACLE " + (showObstacle ? "ON" : "OFF");
+        return "PILOT " + (pilotVisibleForProfile() ? "ON" : "OFF")
+                + " | OBSTACLE " + (obstacleVisibleForProfile() ? "ON" : "OFF");
     }
 
     private void updateDeviceConditions() {
@@ -824,11 +824,12 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
                 : cycleGpuFrameDurationNs / 1_000_000.0 / cycleGpuFrameCount;
         double gpuMaxMs = cycleMaxGpuFrameDurationNs / 1_000_000.0;
         String row = String.format(java.util.Locale.US,
-                "%d,%s,%.2f,%.2f,%.3f,%.3f,%d,%.3f,%d,%.3f,%.3f,%d,%s,%s,%.1f",
+                "%d,%s,%.2f,%.2f,%.3f,%.3f,%d,%.3f,%d,%.3f,%.3f,%d,%s,%s,%.1f,\"%s\",\"%s\",\"%s\"",
                 cycleProfileIndex, PERF_PROFILE_NAMES[cycleProfileIndex], callbacks, accepted,
                 updateMs, renderMs, cycleRejected, callbackMs, cycleCallbackGaps,
                 gpuAvgMs, gpuMaxMs, cycleGpuFrameCount,
-                thermalStatusName, powerSaveMode ? "true" : "false", displayRefreshHz);
+                thermalStatusName, powerSaveMode ? "true" : "false", displayRefreshHz,
+                activeSettingsLine1(), activeSettingsLine2(), activeSettingsLine3());
         cycleCsvRows.add(row);
         Log.i("NRStage2CSV", row);
         cycleProfileIndex++;
@@ -845,7 +846,7 @@ public final class Stage2IntegrationActivity extends Activity implements Choreog
 
     private void saveProfileCycleCsv() {
         StringBuilder csv = new StringBuilder();
-        csv.append("profile_index,profile,callbacks_per_s,accepted_render_per_s,avg_update_cpu_ms,avg_render_call_cpu_ms,false_returns,avg_callback_interval_ms,callback_gaps,gpu_frame_avg_ms,gpu_frame_max_ms,gpu_samples,thermal,power_save,display_hz\n");
+        csv.append("profile_index,profile,callbacks_per_s,accepted_render_per_s,avg_update_cpu_ms,avg_render_call_cpu_ms,false_returns,avg_callback_interval_ms,callback_gaps,gpu_frame_avg_ms,gpu_frame_max_ms,gpu_samples,thermal,power_save,display_hz,settings_bloom_aa,settings_dynamic,settings_objects\\n");
         for (String row : cycleCsvRows) csv.append(row).append('\n');
         String name = "NeonRush_Stage2_ProfileCycle_" + System.currentTimeMillis() + ".csv";
         try {
